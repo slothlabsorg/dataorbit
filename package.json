@@ -1,0 +1,44 @@
+{
+  "name": "dataorbit",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "tauri": "tauri",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:interactions": "npx playwright test --project=interactions",
+    "screenshots": "npx playwright test --project=dataorbit",
+    "screenshots:report": "npx playwright show-report screenshots/report",
+    "db:start": "docker compose up -d dynamodb-local && echo 'DynamoDB Local starting on http://localhost:8000'",
+    "db:stop": "docker compose down",
+    "db:seed": "node scripts/seed-local.mjs",
+    "db:seed:large": "node scripts/seed-large.mjs"
+  },
+  "dependencies": {
+    "@tauri-apps/plugin-process": "^2.3.1",
+    "@tauri-apps/plugin-updater": "^2.10.0",
+    "framer-motion": "^11.3.31",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "optionalDependencies": {
+    "@aws-sdk/client-dynamodb": "^3.750.0",
+    "@aws-sdk/util-dynamodb": "^3.750.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2",
+    "@tauri-apps/cli": "^2.1.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.16",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11",
+    "vitest": "^4.1.0"
+  }
+}
