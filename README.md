@@ -1,8 +1,20 @@
 # DataOrbit
 
-**Database management client for teams.** Built for DynamoDB-first workflows, with support for more databases coming soon.
+**Database management client built for DynamoDB-first workflows.** Visual filter builder, live Streams tail, cross-table joins, and Time Trace — everything the AWS console refuses to give you.
 
-Part of the [SlothLabs](https://slothlabs.org) family — alongside [CloudOrbit](../aws-switch-tauri), your AWS credential manager, and [BastionOrbit](../bastionorbit), your SSH tunnel manager.
+Part of the [SlothLabs](https://slothlabs.org) family — native Rust, free forever.
+
+---
+
+## Screenshots
+
+| Home — connection list | Browse — grid view | Explore — filter builder |
+|---|---|---|
+| ![Home](screenshots/01-home-default.png) | ![Browse](screenshots/03-browse-grid.png) | ![Explore](screenshots/08-explore-filter-added.png) |
+
+| Live stream tail | Cross-join (Left Anti) | Add connection wizard |
+|---|---|---|
+| ![Stream](screenshots/12-stream-live.png) | ![Join](screenshots/35-explore-join-left-anti-missing-alert.png) | ![Wizard](screenshots/32-wizard-step1-type.png) |
 
 ---
 
@@ -13,21 +25,21 @@ Part of the [SlothLabs](https://slothlabs.org) family — alongside [CloudOrbit]
 | DynamoDB — browse tables & items | ✅ |
 | DynamoDB — visual filter/query builder (12 operators) | ✅ |
 | DynamoDB — client-side filtering (exact results, no scan waste) | ✅ |
-| Scan confirmation — large table protection (confirms before >100K item scans) | ✅ |
-| Field autocomplete from table schema (known attributes shown in filter builder) | ✅ |
+| Scan confirmation — large table protection | ✅ |
+| Field autocomplete from table schema | ✅ |
 | Hierarchical / composite key support (`begins_with` on `country::zone::id` patterns) | ✅ |
 | DynamoDB — live Streams tail | ✅ |
 | Cross-table joins (INNER / LEFT / LEFT ANTI ★ / RIGHT / RIGHT ANTI) | ✅ |
 | **Time Trace — cross-table event timeline** ★ | ✅ |
 | Index recommendations — GSI suggestions after inefficient scans | ✅ |
-| Pagination — Load more with remaining count | ✅ |
+| Pagination with remaining count | ✅ |
 | Sort direction toggle (ASC / DESC) | ✅ |
-| Time-range presets (Last 1h / 6h / 24h / 7d) for timestamp keys | ✅ |
+| Time-range presets (Last 1h / 6h / 24h / 7d) | ✅ |
 | Pre-run cost estimator (Query/Scan mode + estimated RCU) | ✅ |
 | Query history | ✅ |
 | Multiple connections | ✅ |
 | AWS profile / access keys / ENV auth | ✅ |
-| DynamoDB Local support (with large-scale seed for perf testing) | ✅ |
+| DynamoDB Local support | ✅ |
 | InfluxDB, TimescaleDB, Cassandra, ScyllaDB | 🚧 Coming soon |
 
 ---
@@ -38,16 +50,8 @@ Part of the [SlothLabs](https://slothlabs.org) family — alongside [CloudOrbit]
 > it's supposed to write to four tables — `DeviceMessages`, `SensorAlerts`, `DeviceRegistry`,
 > and `NotificationHistory`. Did all four writes succeed?
 > With standard DynamoDB tools you open each table separately, copy-paste the entity ID, and pray.
-> That takes 10–15 minutes and still leaves room for human error.
 
-**Time Trace automates this.** Give it a field and value — `deviceId = sensor-0012` — and it
-searches every table in your connection simultaneously. It collects every matching record,
-resolves each one's timestamp, and renders a chronological timeline showing exactly where and
-when the entity appeared in your system.
-
-The critical insight is what's **missing**: tables where the entity was expected but not found
-are called out in a warning panel — *"Entity not found in `SensorAlerts`, `DeviceRegistry`
-— possible propagation failure"* — pointing directly to the dropped write.
+**Time Trace automates this.** Give it a field and value — `deviceId = sensor-0012` — and it searches every table in your connection simultaneously, resolves timestamps, and renders a chronological timeline. Tables where the entity was **expected but not found** are called out in a warning panel — pointing directly to the dropped write.
 
 ### What no other tool does today
 
@@ -55,121 +59,108 @@ are called out in a warning panel — *"Entity not found in `SensorAlerts`, `Dev
 |------|:-----------:|:------------------:|:---------------------:|:----------------------:|
 | AWS Console | ✅ | ❌ | ❌ | ❌ |
 | NoSQL Workbench | ✅ | ❌ | ❌ | ❌ |
-| DynamoDB Streams viewer | ✅ (one table) | ❌ | ✅ (sort of) | ❌ |
 | **DataOrbit Time Trace** | ✅ | **✅** | **✅** | **✅** |
-
-### Real-world scenarios
-
-**1. Sensor battery event — did AlertService write the alert?**
-```
-Field: deviceId = sensor-0012
-```
-→ Timeline shows the WARN reading in `DeviceMessages` (2h ago), location in `DeviceLocations`,
-but **sensor-0012 is missing from `SensorAlerts` and `DeviceRegistry`** — the alert pipeline
-silently dropped the message.
-
-**2. Payment failure — trace a transaction across microservices**
-```
-Field: correlationId = corr-8f3a2b
-```
-→ Reveals the order was created in `Orders` (+0ms), validated in `Inventory` (+120ms),
-but `Payments` shows no record — the payment service never received the event.
-
-**3. User signup flow — which step failed?**
-```
-Field: userId = user-00042
-```
-→ Shows the `UserProfiles` record was created, but `WelcomeEmails` and `OnboardingTasks`
-tables have no matching entry — the downstream fanout failed.
-
-**4. Latency measurement — how long between order → shipment?**
-```
-Field: orderId = ORD-2024-98712
-```
-→ Timeline shows `Orders` (t=0), `PickingQueue` (+1.2s), `PackedItems` (+4m 32s),
-`ShippingLabels` (+4m 35s), `Notifications` (+4m 38s) — end-to-end latency visible at a glance.
-
-### Operators
-
-| Operator | Use case |
-|----------|---------|
-| `= exact` | Efficient — routes to a Query if the field is the table's partition key |
-| `begins_with` | Composite keys: `locationKey begins_with US::northeast::` |
-| `contains (any)` | Full-row search: finds the value in **any** string field, across tables with different field names |
-
----
-
-## Screenshots
-
-> Coming soon.
 
 ---
 
 ## Installation
 
-### macOS (Homebrew)
+### Download
+
+Grab the latest `.dmg` / `.exe` / `.AppImage` from the [Releases](https://github.com/slothlabsorg/dataorbit/releases) page.
+
+### macOS (Homebrew) — coming soon
 
 ```bash
 brew install slothlabs/tap/dataorbit
 ```
 
-### Download
-
-Grab the latest `.dmg` / `.exe` / `.AppImage` from the [Releases](https://github.com/slothlabs/dataorbit/releases) page.
-
 ---
 
-## CloudOrbit integration
+## CloudOrbit + BastionOrbit integration
 
-DataOrbit and CloudOrbit are designed to work together. If you use CloudOrbit to manage AWS sessions, reference the same `~/.aws` profile in DataOrbit — it will pick up the temporary credentials automatically, no copy-pasting needed.
+- **CloudOrbit**: reference the same `~/.aws` profile in DataOrbit — it picks up temporary credentials automatically.
+- **BastionOrbit**: open a tunnel to your database port, then add a DataOrbit connection pointing to `localhost:<localPort>`. No VPN needed.
 
 ---
 
 ## Development
 
-See [DEV_SETUP.md](./DEV_SETUP.md) for full setup instructions.
-
-Quick start:
+Requirements: Node 18+, Rust stable, Tauri v2 CLI.
 
 ```bash
 npm install
 npm run tauri dev
 ```
 
+Browser dev mode (mock data, no Tauri binary):
+
+```bash
+npm run dev
+# Open http://localhost:1421/?mock=1
+```
+
+---
+
+## Testing
+
+```bash
+# Unit tests (Vitest)
+npm test
+
+# Playwright screenshot suite
+npm run screenshots
+```
+
+Rust unit tests:
+
+```bash
+cd src-tauri
+cargo test
+```
+
+---
+
+## Contributing
+
+1. Fork the repo and create a branch: `git checkout -b my-feature`
+2. Make your changes and run the test suites above
+3. Open a pull request — all PRs require review before merging to `main`
+4. Direct pushes to `main` are disabled
+
+For significant changes, open an issue first to discuss the approach.
+
 ---
 
 ## Roadmap
 
-### v0.3 — Query engine enhancements (DynamoDB)
-> Deepen the DynamoDB advantage before adding new database types.
-
+### v0.3 — Query engine enhancements
 - Time Trace: OR conditions, pattern matching, exportable timeline
 - Composite key joins (cross-table on multiple fields)
-- Cross-account / cross-connection joins
 - Filter groups with AND / OR logic
 - Client-side aggregates: COUNT, DISTINCT, GROUP BY, MIN/MAX/AVG
-- Clipboard paste for `in` operator (newline- or comma-separated IDs)
-- Saved queries & per-table templates
 - Export results to CSV / JSON (with auto-pagination)
-- Regular expression post-filter (client-side)
-- Session-resumable pagination cursor
+- Saved queries & per-table templates
 
 ### v0.3 — Multi-database
-- InfluxDB support (connect, browse measurements, run Flux queries)
+- InfluxDB support
 - TimescaleDB (PostgreSQL-based time series)
 - Cassandra / ScyllaDB support
 
 ### v0.4 — Advanced
 - Schema visualization (ERD-style view)
 - DynamoDB item editor (insert / update / delete)
-- Query editor with autocomplete
 - Multi-region stream viewer
 
 ---
 
-## Contributing
+## Support the project
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md).
+DataOrbit is free and built on nights and weekends. If it saves you time, consider supporting continued development:
+
+- [Ko-fi](https://ko-fi.com/slothlabs)
+- [GitHub Sponsors](https://github.com/sponsors/slothlabsorg)
+- [Polar.sh](https://polar.sh/slothlabs)
 
 ---
 
