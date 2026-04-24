@@ -28,7 +28,7 @@ export function Shell({
   const activeTableMeta = activeConn?.tables?.find(t => t.name === activeTable) ?? null
 
   return (
-    <div className="flex flex-col h-screen overflow-hidden">
+    <div className="flex flex-col h-full overflow-hidden">
       <Titlebar activeConnection={activeConn} />
 
       <div className="flex flex-1 overflow-hidden">

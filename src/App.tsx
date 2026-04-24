@@ -4,6 +4,7 @@ import { api } from '@/lib/tauri'
 import { mockConnections } from '@/mock/data'
 import { Shell } from '@/components/layout/Shell'
 import { AddConnectionWizard } from '@/components/ui/AddConnectionWizard'
+import { UpdateBanner } from '@/components/ui/UpdateBanner'
 import { Home } from '@/screens/Home'
 import { Browse } from '@/screens/Browse'
 import { Explore } from '@/screens/Explore'
@@ -88,57 +89,59 @@ export default function App() {
   }
 
   return (
-    <>
-      <Shell
-        screen={screen}
-        onNavigate={setScreen}
-        sidebarCollapsed={sidebarCollapsed}
-        onToggleSidebar={() => setSidebarCollapsed(c => !c)}
-        connections={connections}
-        activeConnectionId={activeConnId}
-        activeTable={activeTable}
-        onSelectConnection={handleSelectConnection}
-        onSelectTable={handleSelectTable}
-        onAddConnection={() => setWizardOpen(true)}
-      >
-        {screen === 'home'    && (
-          <Home
-            connections={connections}
-            onSelectConnection={handleSelectConnection}
-            onAddConnection={() => setWizardOpen(true)}
-          />
-        )}
-        {screen === 'browse'  && (
-          <Browse
-            activeConnection={activeConn}
-            activeTable={activeTable}
-            onSelectTable={handleSelectTable}
-          />
-        )}
-        {screen === 'explore' && (
-          <Explore
-            activeConnection={activeConn}
-            activeTable={activeTable}
-          />
-        )}
-        {screen === 'stream'  && (
-          <Stream
-            activeConnection={activeConn}
-            activeTable={activeTable}
-          />
-        )}
-        {screen === 'history' && <QueryHistory />}
-        {screen === 'settings' && <Settings />}
-        {screen === 'docs'    && <Docs />}
-        {screen === 'support' && <Support />}
-      </Shell>
-
+    <div className="flex flex-col h-screen overflow-hidden">
+      <UpdateBanner />
+      <div className="flex-1 min-h-0">
+        <Shell
+          screen={screen}
+          onNavigate={setScreen}
+          sidebarCollapsed={sidebarCollapsed}
+          onToggleSidebar={() => setSidebarCollapsed(c => !c)}
+          connections={connections}
+          activeConnectionId={activeConnId}
+          activeTable={activeTable}
+          onSelectConnection={handleSelectConnection}
+          onSelectTable={handleSelectTable}
+          onAddConnection={() => setWizardOpen(true)}
+        >
+          {screen === 'home'    && (
+            <Home
+              connections={connections}
+              onSelectConnection={handleSelectConnection}
+              onAddConnection={() => setWizardOpen(true)}
+            />
+          )}
+          {screen === 'browse'  && (
+            <Browse
+              activeConnection={activeConn}
+              activeTable={activeTable}
+              onSelectTable={handleSelectTable}
+            />
+          )}
+          {screen === 'explore' && (
+            <Explore
+              activeConnection={activeConn}
+              activeTable={activeTable}
+            />
+          )}
+          {screen === 'stream'  && (
+            <Stream
+              activeConnection={activeConn}
+              activeTable={activeTable}
+            />
+          )}
+          {screen === 'history' && <QueryHistory />}
+          {screen === 'settings' && <Settings />}
+          {screen === 'docs'    && <Docs />}
+          {screen === 'support' && <Support />}
+        </Shell>
+      </div>
       {wizardOpen && (
         <AddConnectionWizard
           onClose={() => setWizardOpen(false)}
           onSave={handleAddConnection}
         />
       )}
-    </>
+    </div>
   )
 }
