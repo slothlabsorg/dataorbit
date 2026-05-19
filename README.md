@@ -1,8 +1,22 @@
-# DataOrbit
+<div align="center">
+  <h1>🗄️ DataOrbit — DynamoDB GUI Client for macOS</h1>
+  <p><strong>The native DynamoDB GUI for developers — visual query builder, live DynamoDB Streams tail, cross-table joins, Time Trace event timeline, and full query history. The DynamoDB client AWS forgot to ship.</strong></p>
 
-**Database management client built for DynamoDB-first workflows.** Visual filter builder, live Streams tail, cross-table joins, and Time Trace — everything the AWS console refuses to give you.
+  [![Release](https://img.shields.io/github/v/release/slothlabsorg/dataorbit?style=flat-square)](https://github.com/slothlabsorg/dataorbit/releases)
+  [![License: FSL-1.1-MIT](https://img.shields.io/badge/License-FSL--1.1--MIT-blue.svg?style=flat-square)](LICENSE)
+  [![GitHub Sponsors](https://img.shields.io/github/sponsors/slothlabsorg?style=flat-square&logo=github&color=pink)](https://github.com/sponsors/slothlabsorg)
+  [![Website](https://img.shields.io/badge/web-slothlabs.org-8B5CF6?style=flat-square)](https://slothlabs.org/dataorbit)
+</div>
 
-Part of the [SlothLabs](https://slothlabs.org) family — native Rust, free forever.
+---
+
+## What is DataOrbit?
+
+**DataOrbit is the native DynamoDB GUI client for macOS, Windows, and Linux.** Browse tables and items in a fast grid, build queries with a visual filter builder (12 operators, schema autocomplete, hierarchical-key support), tail DynamoDB Streams in real time, run cross-table joins (INNER / LEFT / LEFT ANTI / RIGHT / RIGHT ANTI), and trace events across multiple tables on a single timeline.
+
+If you've been using **NoSQL Workbench** (buggy Java) or **TablePlus** (DynamoDB support is bolted on), DataOrbit is the dedicated DynamoDB UI you've been waiting for. Native Rust, no Electron, free forever, MIT license horizon.
+
+Part of the [SlothLabs](https://slothlabs.org) family — see the full suite at the bottom.
 
 ---
 
@@ -161,6 +175,33 @@ DataOrbit is free and built on nights and weekends. If it saves you time, consid
 - [Ko-fi](https://ko-fi.com/slothlabs)
 - [GitHub Sponsors](https://github.com/sponsors/slothlabsorg)
 - [Polar.sh](https://polar.sh/slothlabs)
+
+---
+
+## We need your help 🙏
+
+DataOrbit is built solo on nights and weekends. Concrete things contributors can pick up:
+
+- 🦀 **Rust contributors** — CouchDB driver, time-series database support
+- ⚛️ **React contributors** — UI polish, accessibility, keyboard shortcuts
+- 📊 **Visualization** — better grid rendering for 100k+ row tables
+- 🧪 **Beta testers** — production DynamoDB workloads, edge cases
+- 📝 **Docs** — DynamoDB modeling guides, recipe collection
+- 🌍 **i18n** — translations welcome
+
+Pick anything labeled `good-first-issue` or `help-wanted` on the [tracker](https://github.com/slothlabsorg/dataorbit/issues).
+
+---
+
+## Other SlothLabs tools
+
+| | | |
+|---|---|---|
+| ☁️ [CloudOrbit](https://slothlabs.org/cloudorbit) | AWS client UI for macOS · SSO, EKS, kubeconfig | macOS · Win · Linux |
+| ⚡ [WattsOrbit](https://slothlabs.org/wattsorbit) | Mac power monitor for the menu bar | macOS · Win · Linux |
+| 🔍 [ProxyOrbit](https://slothlabs.org/proxyorbit) | Free Charles Proxy alternative | macOS · Win · Linux |
+| 🔐 [BastionOrbit](https://slothlabs.org/bastionorbit) | SSH tunnel manager with auto-expiry TTL | macOS · Win · Linux |
+| 🧜 [Mermaid Preview](https://slothlabs.org/mermaid-preview) | Mermaid IntelliJ / JetBrains plugin | All JetBrains IDEs |
 
 ---
 
