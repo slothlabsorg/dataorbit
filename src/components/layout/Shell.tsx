@@ -4,6 +4,8 @@ import { Titlebar } from './Titlebar'
 import { Sidebar } from './Sidebar'
 import { StatusBar } from './StatusBar'
 
+type BellItem = { id: string; kind: 'update-available' | 'release' | 'announcement'; title: string; body?: string; date: string; url?: string }
+
 interface ShellProps {
   screen: Screen
   onNavigate: (screen: Screen) => void
@@ -15,13 +17,19 @@ interface ShellProps {
   onSelectConnection: (id: string) => void
   onSelectTable: (connId: string, table: string) => void
   onAddConnection: () => void
+  onDeleteConnection: (id: string) => void
+  newsUnread?: number
+  bellItems?: BellItem[]
+  onNewsMarkRead?: () => void
+  onTriggerUpdate?: () => void
   children: React.ReactNode
 }
 
 export function Shell({
   screen, onNavigate, sidebarCollapsed, onToggleSidebar,
   connections, activeConnectionId, activeTable,
-  onSelectConnection, onSelectTable, onAddConnection,
+  onSelectConnection, onSelectTable, onAddConnection, onDeleteConnection,
+  newsUnread, bellItems, onNewsMarkRead, onTriggerUpdate,
   children,
 }: ShellProps) {
   const activeConn = connections.find(c => c.id === activeConnectionId) ?? null
@@ -29,7 +37,13 @@ export function Shell({
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      <Titlebar activeConnection={activeConn} />
+      <Titlebar
+        activeConnection={activeConn}
+        bellItems={bellItems}
+        newsUnread={newsUnread}
+        onNewsMarkRead={onNewsMarkRead}
+        onTriggerUpdate={onTriggerUpdate}
+      />
 
       <div className="flex flex-1 overflow-hidden">
         <Sidebar
@@ -43,6 +57,8 @@ export function Shell({
           onSelectConnection={onSelectConnection}
           onSelectTable={onSelectTable}
           onAddConnection={onAddConnection}
+          onDeleteConnection={onDeleteConnection}
+          newsUnread={newsUnread}
         />
 
         <div className="flex-1 overflow-hidden">

@@ -1,11 +1,12 @@
-import { useState, useEffect } from 'react'
-import type { Screen, DbConnection } from '@/types'
+import { useState, useEffect, useMemo, useCallback } from 'react'
+import type { Screen, DbConnection, TableMeta } from '@/types'
 import { api } from '@/lib/tauri'
+import { useConnectionHealth } from '@/hooks/useConnectionHealth'
 import { mockConnections } from '@/mock/data'
 import { Shell } from '@/components/layout/Shell'
-import { AddConnectionWizard } from '@/components/ui/AddConnectionWizard'
-import { UpdateBanner } from '@/components/ui/UpdateBanner'
+import { AddConnectionWizard, type WizardInitial } from '@/components/ui/AddConnectionWizard'
 import { Home } from '@/screens/Home'
+import { Orbit } from '@/screens/Orbit'
 import { Browse } from '@/screens/Browse'
 import { Explore } from '@/screens/Explore'
 import { Stream } from '@/screens/Stream'
@@ -13,14 +14,31 @@ import { QueryHistory } from '@/screens/QueryHistory'
 import { Settings } from '@/screens/Settings'
 import { Docs } from '@/screens/Docs'
 import { Support } from '@/screens/Support'
+import { UpdaterModal } from '@/components/UpdaterModal'
+import { News } from '@/screens/News'
+import { loadNews, markRead, getUnreadIds } from '@/lib/news'
+import { MOCK_FEED } from '@/data/news-mock'
+import type { NewsItem } from '@/types/news'
+import { ToastContainer, useToast } from '@/components/ui/Toast'
 
 function getUrlParam(key: string): string | null {
   try { return new URL(window.location.href).searchParams.get(key) } catch { return null }
 }
-const URL_SCREEN = (getUrlParam('screen') as Screen | null) ?? 'home'
-const URL_MOCK   = getUrlParam('mock') === '1'
+const URL_SCREEN          = (getUrlParam('screen') as Screen | null) ?? 'orbit'
+const URL_MOCK            = getUrlParam('mock') === '1'
+const URL_UPDATER         = getUrlParam('updater') === '1'
+const URL_NEWS            = getUrlParam('news') === '1'
+const URL_MOCK_NEWS       = getUrlParam('mockNews') === '1' || URL_NEWS
+const URL_MOCK_UPDATE     = getUrlParam('mockUpdate') === '1'
+const URL_MOCK_UPDATE_VER = getUrlParam('mockUpdateVersion') ?? '1.1.0'
+const URL_PREVIEW_UPDATE  = getUrlParam('preview_update') !== null
 
-let connIdCounter = 10
+const MOCK_NEWS_INFO = {
+  version: '1.1.0',
+  body: `## What's new in v1.1.0\n\n- SQLite support — browse local SQLite databases with no server required\n- Timescale time-bucket query builder support\n- Table search in the sidebar\n- Export query results to CSV / JSON\n- Connection health indicator in the sidebar`,
+}
+
+let connIdCounter = 10  // fallback counter for non-Tauri dev mode only
 
 export default function App() {
   const [screen, setScreen]               = useState<Screen>(URL_SCREEN)
@@ -29,7 +47,25 @@ export default function App() {
   const [activeTable, setActiveTable]     = useState<string | null>(null)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [wizardOpen, setWizardOpen]       = useState(false)
+  const [wizardInitial, setWizardInitial] = useState<WizardInitial | undefined>()
+  const [editingConnId, setEditingConnId] = useState<string | undefined>()
+  const [connErrors, setConnErrors]       = useState<Record<string, string>>({})
+  const [sessionAlerts, setSessionAlerts] = useState<Record<string, string>>({})
   const [isLoading, setIsLoading]         = useState(true)
+  const [updateInfo, setUpdateInfo]       = useState<{ version: string; body: string | null } | null>(
+    URL_NEWS ? MOCK_NEWS_INFO : URL_MOCK_UPDATE ? { version: URL_MOCK_UPDATE_VER, body: null } : null
+  )
+  const [updaterDismissed, setUpdaterDismissed] = useState(() => {
+    const v = URL_MOCK_UPDATE ? URL_MOCK_UPDATE_VER : ''
+    if (!v) return false
+    try { return localStorage.getItem('dataorbit.updaterDismissed') === v } catch { return false }
+  })
+  const validItems = MOCK_FEED.items.filter(i => !i.expiresAt || new Date(i.expiresAt).getTime() > Date.now())
+  const [newsItems, setNewsItems]         = useState<NewsItem[]>(() => URL_MOCK_NEWS ? validItems : [])
+  const [newsUnread, setNewsUnread]       = useState(() =>
+    URL_MOCK_NEWS ? getUnreadIds(validItems).length : 0
+  )
+  const { toasts, show: showToast, dismiss: dismissToast } = useToast()
 
   // Load connections on mount
   useEffect(() => {
@@ -65,17 +101,145 @@ export default function App() {
   function handleSelectTable(connId: string, table: string) {
     setActiveConnId(connId)
     setActiveTable(table)
-    if (screen !== 'stream') setScreen('browse')
+    // Stay in Explore or Stream when user clicks a table — they want to query it there
+    if (screen === 'home' || screen === 'orbit' || screen === 'history') setScreen('browse')
   }
 
-  function handleAddConnection(conn: Omit<DbConnection, 'id' | 'status'>) {
-    const newConn: DbConnection = {
-      ...conn,
-      id: `conn-${++connIdCounter}`,
-      status: 'disconnected',
+  async function handleAddConnection(conn: Omit<DbConnection, 'id' | 'status'>) {
+    // If editing an existing connection, delete the old one first
+    const replacingId = editingConnId
+    if (replacingId) {
+      try { await api.deleteConnection(replacingId) } catch { /* ok */ }
+      setConnections(prev => prev.filter(c => c.id !== replacingId))
+      setEditingConnId(undefined)
     }
-    setConnections(prev => [...prev, newConn])
-    setActiveConnId(newConn.id)
+
+    let saved: DbConnection
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { tables: _t, ...connToSave } = conn
+      saved = await api.saveConnection(connToSave)
+    } catch (e) {
+      console.error('saveConnection failed:', e)
+      // Not in Tauri or serialization error — in-memory fallback (dev only)
+      const newConn: DbConnection = { ...conn, id: `conn-${++connIdCounter}`, status: 'disconnected' }
+      setConnections(prev => [...prev, newConn])
+      setActiveConnId(newConn.id)
+      return
+    }
+
+    let tables: TableMeta[] = []
+    let status: DbConnection['status'] = 'error'
+    let errMsg = ''
+    try {
+      tables = await api.listTables(saved.id)
+      status = 'connected'
+    } catch (e) {
+      errMsg = e instanceof Error ? e.message : String(e)
+    }
+
+    const fullConn: DbConnection = { ...saved, status, tables }
+    setConnections(prev => [...prev, fullConn])
+    if (errMsg) setConnErrors(prev => ({ ...prev, [saved.id]: errMsg }))
+    setActiveConnId(saved.id)
+    setScreen('browse')
+  }
+
+  function handleQuickConnect(profile: string, region: string) {
+    setWizardInitial({ name: profile, awsProfile: profile, awsRegion: region })
+    setWizardOpen(true)
+  }
+
+  async function handleConnectConnection(id: string) {
+    setConnections(prev => prev.map(c => c.id === id ? { ...c, status: 'connecting' } : c))
+    setConnErrors(prev => { const n = { ...prev }; delete n[id]; return n })
+    try {
+      const tables = await api.listTables(id)
+      setConnections(prev => prev.map(c => c.id === id ? { ...c, status: 'connected', tables } : c))
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      setConnections(prev => prev.map(c => c.id === id ? { ...c, status: 'error' } : c))
+      setConnErrors(prev => ({ ...prev, [id]: msg }))
+    }
+  }
+
+  function handleDisconnectConnection(id: string) {
+    setConnections(prev => prev.map(c =>
+      c.id === id ? { ...c, status: 'disconnected', tables: [] } : c
+    ))
+    setConnErrors(prev => { const n = { ...prev }; delete n[id]; return n })
+    setSessionAlerts(prev => { const n = { ...prev }; delete n[id]; return n })
+    if (activeConnId === id) setActiveTable(null)
+  }
+
+  // Passive health check — pings active connections every 60s
+  useConnectionHealth(connections, {
+    onDegraded: (id, error) => {
+      setConnections(prev => prev.map(c => c.id === id ? { ...c, status: 'error' } : c))
+      setSessionAlerts(prev => ({ ...prev, [id]: error }))
+    },
+    onRecovered: (id) => {
+      setSessionAlerts(prev => { const n = { ...prev }; delete n[id]; return n })
+    },
+  })
+
+  // ── News feed ─────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (URL_MOCK || URL_MOCK_NEWS) return
+    loadNews().then(items => {
+      setNewsItems(items)
+      setNewsUnread(getUnreadIds(items).length)
+    })
+  }, [])
+
+  // Bell items: synthetic update entry (when dismissed) + one per kind from news
+  const bellItems = useMemo(() => {
+    type BellItem = { id: string; kind: 'update-available' | 'release' | 'announcement'; title: string; body?: string; date: string; url?: string }
+    const items: BellItem[] = []
+    if (updateInfo && updaterDismissed) {
+      items.push({ id: 'update-available', kind: 'update-available', title: `v${updateInfo.version} is available`, body: 'Click to install the latest update', date: new Date().toISOString() })
+    }
+    const seen = new Set<string>()
+    for (const n of newsItems.filter(i => i.type !== 'ad')) {
+      const kind = n.type === 'changelog' ? 'release' : 'announcement'
+      if (seen.has(kind)) continue
+      seen.add(kind)
+      items.push({ id: n.id, kind, title: n.title, body: n.body.split('\n').filter(Boolean)[0] ?? '', date: n.publishedAt, url: n.action?.url })
+    }
+    return items
+  }, [newsItems, updateInfo, updaterDismissed])
+
+  const handleNewsMarkRead = useCallback(() => {
+    const ids = newsItems.map(i => i.id)
+    markRead(ids)
+    setNewsUnread(0)
+  }, [newsItems])
+
+  function handleOpenWizardForConn(id: string) {
+    const conn = connections.find(c => c.id === id)
+    if (!conn) return
+    setEditingConnId(id)
+    setWizardInitial({
+      name:       conn.name,
+      awsProfile: conn.awsProfile,
+      awsRegion:  conn.awsRegion,
+      endpoint:   conn.endpoint,
+    })
+    setWizardOpen(true)
+  }
+
+  async function handleDeleteConnection(id: string) {
+    try {
+      await api.deleteConnection(id)
+    } catch {
+      // Not in Tauri — still remove from local state
+    }
+    setConnections(prev => prev.filter(c => c.id !== id))
+    if (activeConnId === id) {
+      setActiveConnId(null)
+      setActiveTable(null)
+      setScreen('home')
+    }
   }
 
   const activeConn = connections.find(c => c.id === activeConnId) ?? null
@@ -88,9 +252,48 @@ export default function App() {
     )
   }
 
+  const alertEntries = Object.entries(sessionAlerts)
+
   return (
     <div className="flex flex-col h-screen overflow-hidden">
-      <UpdateBanner />
+      {(!URL_MOCK || URL_UPDATER || URL_MOCK_UPDATE || URL_PREVIEW_UPDATE) && (
+        <UpdaterModal
+          dismissed={updaterDismissed}
+          onDismiss={() => {
+            if (updateInfo?.version) {
+              try { localStorage.setItem('dataorbit.updaterDismissed', updateInfo.version) } catch {}
+            }
+            setUpdaterDismissed(true)
+          }}
+          onUpdateAvailable={(version, body) => {
+            setUpdateInfo({ version, body })
+            try {
+              if (localStorage.getItem('dataorbit.updaterDismissed') === version) {
+                setUpdaterDismissed(true)
+              }
+            } catch {}
+          }}
+        />
+      )}
+      {/* Session expiry alerts */}
+      {alertEntries.map(([id, msg]) => {
+        const conn = connections.find(c => c.id === id)
+        if (!conn) return null
+        return (
+          <div key={id} className="flex items-center justify-between gap-3 px-4 py-1.5 bg-warning/10 border-b border-warning/30 text-xs flex-shrink-0">
+            <span className="text-warning font-medium truncate">
+              Session expired: <span className="font-semibold">{conn.name}</span>
+              {msg && msg !== 'ping timeout' && <span className="text-warning/70 ml-1">— {msg.slice(0, 80)}</span>}
+            </span>
+            <button
+              onClick={() => handleOpenWizardForConn(id)}
+              className="text-warning hover:text-warning/80 font-semibold whitespace-nowrap"
+            >
+              Reconnect →
+            </button>
+          </div>
+        )
+      })}
       <div className="flex-1 min-h-0">
         <Shell
           screen={screen}
@@ -102,13 +305,36 @@ export default function App() {
           activeTable={activeTable}
           onSelectConnection={handleSelectConnection}
           onSelectTable={handleSelectTable}
-          onAddConnection={() => setWizardOpen(true)}
+          onAddConnection={() => { setWizardInitial(undefined); setWizardOpen(true) }}
+          onDeleteConnection={handleDeleteConnection}
+          newsUnread={newsUnread}
+          bellItems={bellItems}
+          onNewsMarkRead={handleNewsMarkRead}
+          onTriggerUpdate={() => setUpdaterDismissed(false)}
         >
           {screen === 'home'    && (
             <Home
               connections={connections}
+              connErrors={connErrors}
               onSelectConnection={handleSelectConnection}
-              onAddConnection={() => setWizardOpen(true)}
+              onAddConnection={() => { setWizardInitial(undefined); setWizardOpen(true) }}
+              onDeleteConnection={handleDeleteConnection}
+              onConnectConnection={handleConnectConnection}
+              onEditConnection={handleOpenWizardForConn}
+            />
+          )}
+          {screen === 'orbit'   && (
+            <Orbit
+              connections={connections}
+              connErrors={connErrors}
+              onSelectConnection={handleSelectConnection}
+              onSelectTable={handleSelectTable}
+              onAddConnection={() => { setWizardInitial(undefined); setWizardOpen(true) }}
+              onConnectConnection={handleConnectConnection}
+              onDisconnectConnection={handleDisconnectConnection}
+              onEditConnection={handleOpenWizardForConn}
+              onQuickConnect={handleQuickConnect}
+              onNavigate={setScreen}
             />
           )}
           {screen === 'browse'  && (
@@ -116,12 +342,31 @@ export default function App() {
               activeConnection={activeConn}
               activeTable={activeTable}
               onSelectTable={handleSelectTable}
+              onRefreshTables={(connId, tables) =>
+                setConnections(prev => prev.map(c => c.id === connId ? { ...c, tables } : c))
+              }
+              onUpdateTableSchema={(connId, schema) =>
+                setConnections(prev => prev.map(c =>
+                  c.id === connId ? { ...c, tables: (c.tables ?? []).map(t => t.name === schema.name ? { ...t, ...schema } : t) } : c
+                ))
+              }
+              showToast={showToast}
             />
           )}
           {screen === 'explore' && (
             <Explore
               activeConnection={activeConn}
               activeTable={activeTable}
+              onUpdateSchema={(connId, tableName, attrs) =>
+                setConnections(prev => prev.map(c =>
+                  c.id === connId ? {
+                    ...c,
+                    tables: (c.tables ?? []).map(t =>
+                      t.name === tableName ? { ...t, attributes: attrs } : t
+                    )
+                  } : c
+                ))
+              }
             />
           )}
           {screen === 'stream'  && (
@@ -131,15 +376,18 @@ export default function App() {
             />
           )}
           {screen === 'history' && <QueryHistory />}
+          {screen === 'news'    && <News onVisit={() => setNewsUnread(0)} />}
           {screen === 'settings' && <Settings />}
           {screen === 'docs'    && <Docs />}
           {screen === 'support' && <Support />}
         </Shell>
       </div>
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
       {wizardOpen && (
         <AddConnectionWizard
-          onClose={() => setWizardOpen(false)}
+          onClose={() => { setWizardOpen(false); setWizardInitial(undefined); setEditingConnId(undefined) }}
           onSave={handleAddConnection}
+          initialValues={wizardInitial}
         />
       )}
     </div>
