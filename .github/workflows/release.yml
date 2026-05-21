@@ -9,72 +9,95 @@ jobs:
   release:
     permissions:
       contents: write
+
     strategy:
       fail-fast: false
       matrix:
         include:
+          # macOS — Apple Silicon (ARM64)
           - platform: macos-latest
-            args: --target aarch64-apple-darwin
-            rust-target: aarch64-apple-darwin
+            args: '--target aarch64-apple-darwin'
+            rust-targets: 'aarch64-apple-darwin'
+
+          # macOS — Intel (x86_64), cross-compiled on ARM64 runner.
+          # macos-13 queues for hours; ARM64 runner handles x86_64 via cross
+          # toolchain and the DMG runs under Rosetta identically.
           - platform: macos-latest
-            args: --target x86_64-apple-darwin
-            rust-target: x86_64-apple-darwin
-          - platform: windows-latest
-            args: ''
-            rust-target: ''
+            args: '--target x86_64-apple-darwin'
+            rust-targets: 'x86_64-apple-darwin'
+
+          # Linux — x86_64 (.deb + .AppImage)
           - platform: ubuntu-22.04
             args: ''
-            rust-target: ''
+            rust-targets: ''
+
+          # Windows — x86_64 (.msi + NSIS .exe)
+          - platform: windows-latest
+            args: ''
+            rust-targets: ''
 
     runs-on: ${{ matrix.platform }}
 
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
+          cache: 'npm'
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.rust-target }}
+          targets: ${{ matrix.rust-targets }}
 
-      - uses: Swatinem/rust-cache@v2
+      - name: Rust build cache
+        uses: Swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri
+          workspaces: './src-tauri -> target'
 
-      - name: Install system deps (Linux)
+      - name: Install Linux system dependencies
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
-            libayatana-appindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
 
-      - run: npm ci
+      - name: Install frontend dependencies
+        run: npm ci
 
-      - uses: tauri-apps/tauri-action@v0
+      - name: Build and publish release
+        uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # ── Crash reporting ─────────────────────────────────────────────────
-          VITE_SENTRY_DSN: ${{ secrets.VITE_SENTRY_DSN }}
-          # ── macOS code signing + notarization ────────────────────────────────
+          # ── Updater signing ──────────────────────────────────────────────────
+          # Generate with: cargo tauri signer generate -w ~/.tauri/dataorbit.key
+          TAURI_SIGNING_PRIVATE_KEY:          ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # ── Apple code-signing + notarization ────────────────────────────────
+          # Uncomment when Apple Developer account is configured.
           # Without these the DMG is unsigned — users see the unverified developer
-          # warning on first launch. Set all six secrets for a fully signed release.
-          # See RELEASING.md for instructions.
-          APPLE_CERTIFICATE:          ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY:     ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID:                   ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD:             ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID:              ${{ secrets.APPLE_TEAM_ID }}
-          TAURI_PRIVATE_KEY:          ${{ secrets.TAURI_PRIVATE_KEY }}
-          TAURI_KEY_PASSWORD:         ${{ secrets.TAURI_KEY_PASSWORD }}
+          # warning on first launch.
+          # APPLE_CERTIFICATE:          ${{ secrets.APPLE_CERTIFICATE }}
+          # APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          # APPLE_SIGNING_IDENTITY:     ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          # APPLE_ID:                   ${{ secrets.APPLE_ID }}
+          # APPLE_PASSWORD:             ${{ secrets.APPLE_PASSWORD }}
+          # APPLE_TEAM_ID:              ${{ secrets.APPLE_TEAM_ID }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'DataOrbit ${{ github.ref_name }}'
           releaseBody: |
-            See [CHANGELOG](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details.
+            See the [CHANGELOG](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for full details.
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
