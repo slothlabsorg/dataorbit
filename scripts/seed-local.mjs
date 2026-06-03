@@ -342,7 +342,7 @@ async function main() {
   try {
     await client.send(new DescribeTableCommand({ TableName: '__ping__' }))
   } catch (err) {
-    if (!err.message?.includes('ResourceNotFoundException')) {
+    if (err.name !== 'ResourceNotFoundException' && !err.message?.includes('ResourceNotFoundException')) {
       console.error('Cannot reach DynamoDB Local. Is it running?')
       console.error('  npm run db:start')
       process.exit(1)

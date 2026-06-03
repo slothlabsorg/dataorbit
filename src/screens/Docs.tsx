@@ -275,45 +275,66 @@ FilterExpression  — evaluated AFTER items are read
 function SectionRoadmap() {
   return (
     <div className="space-y-4">
-      <P>These are planned additions to the query engine for <strong className="text-text-primary">v0.2.0</strong> — before multi-database support lands in v0.3+. The goal is to make DataOrbit the best DynamoDB developer tool available.</P>
+      <P>DataOrbit is approaching <strong className="text-text-primary">v1.0.0</strong> — the first stable release. Below is the full picture of what's shipped and what's coming.</P>
 
-      <H4>Pagination support</H4>
-      <P>Automatically follow <InlineCode>lastEvaluatedKey</InlineCode> with a "Load more" button and a paginator showing current page position. Pin the pagination cursor to resume a query across sessions.</P>
+      <H4>✓ Shipped</H4>
+      <div className="rounded-lg border border-success/20 bg-success/5 px-3 py-2 space-y-1 text-[11px] text-text-secondary">
+        <div className="grid grid-cols-2 gap-x-4 gap-y-0.5">
+          {[
+            'Browse with real DynamoDB data',
+            'Sort by sort-key field (↑ ASC / ↓ DESC)',
+            'Pagination — Load more with cursor',
+            'Customizable time-range presets (N min/h/days)',
+            'Datetime picker for timestamp fields',
+            'Composite key prefix queries (begins_with)',
+            'Query cost estimator + Scan warning',
+            'Cross-table joins (INNER / LEFT / ANTI / RIGHT)',
+            'All 12 filter operators',
+            'GSI / LSI index queries',
+            'Inline item editing (JSON editor + linter)',
+            'Delete item with confirmation',
+            'Table schema panel (pk, sk, indexes)',
+            'Field autocomplete from real schema',
+            'TimeTrace — cross-table entity timeline',
+            'Sidebar search for 100+ tables',
+            'Session health ping + expiry alerts',
+            'AWS session auto-detect (from ~/.aws)',
+          ].map(item => (
+            <div key={item} className="flex items-center gap-1.5">
+              <span className="text-success flex-shrink-0">✓</span>
+              <span>{item}</span>
+            </div>
+          ))}
+        </div>
+      </div>
 
-      <H4>Sort direction toggle</H4>
-      <P>A UI toggle for <InlineCode>ScanIndexForward: false</InlineCode> to reverse sort key order (newest-first) without editing chips. Critical for time-series tables where you almost always want the latest N items.</P>
-
-      <H4>Composite key joins</H4>
-      <P>Cross-join on multiple fields simultaneously (e.g. <InlineCode>deviceId + eventType</InlineCode>). The current join engine supports one key; v0.2 will support n-key maps for composite primary keys.</P>
-
-      <H4>Cross-account / cross-connection joins</H4>
-      <P>Join tables from two different AWS connections (e.g. prod vs staging, or two different accounts). Each side fetches independently and merges client-side.</P>
-
-      <H4>Filter groups with AND / OR logic</H4>
-      <P>Currently all chips use AND. v0.2 will add OR groups — a second chip row connected with OR. This maps to DynamoDB's <InlineCode>FilterExpression</InlineCode> OR operator, useful for multi-value status filters.</P>
-
-      <H4>Time-range presets</H4>
-      <P>Quick sort-key presets for timestamp columns: <InlineCode>Last 1h</InlineCode>, <InlineCode>Last 24h</InlineCode>, <InlineCode>Last 7d</InlineCode>, <InlineCode>Today</InlineCode>. Auto-converts to BETWEEN values using the current time.</P>
+      <H4>Coming in v1.0.0</H4>
 
       <H4>Aggregate operations (client-side)</H4>
       <P>After fetching results: <InlineCode>COUNT</InlineCode>, <InlineCode>DISTINCT values</InlineCode>, <InlineCode>GROUP BY field</InlineCode> with counts, <InlineCode>MIN/MAX/AVG</InlineCode> on numeric fields. Executed in-memory on the fetched rows.</P>
 
-      <H4>Clipboard IN values</H4>
-      <P>Paste a newline- or comma-separated list of values directly into the <InlineCode>in</InlineCode> operator field. Useful for checking "which of these 50 device IDs exist in this table."</P>
-
-      <H4>Query cost estimator</H4>
-      <P>Before running, show an estimated RCU range based on the selected op mode (Query vs Scan) and the table's item count and average item size. Helps avoid expensive accidental scans on large tables.</P>
-
-      <H4>Saved queries &amp; templates</H4>
-      <P>Save named queries per table. DataOrbit auto-detects common patterns (single-pk lookup, time-range on sk, status filter) and offers them as one-click templates when you open a table.</P>
-
       <H4>Export to CSV / JSON</H4>
       <P>Export query results (including join results) to <InlineCode>.csv</InlineCode> or <InlineCode>.json</InlineCode>. Paginate automatically until all results are fetched before writing the file.</P>
 
-      <H4>Regular expression filter (client-side)</H4>
-      <P>An extra filter step applied in-memory after fetching: regex match on any string field. Useful for substring patterns that DynamoDB's <InlineCode>contains</InlineCode> can't express.</P>
+      <H4>Composite-key cross-joins</H4>
+      <P>Join on multiple fields simultaneously. The current join engine supports one key; v1.0 will support n-key maps for composite primary keys like <InlineCode>accountId + eventType</InlineCode>.</P>
 
-      <Tip>These items are roughly prioritized. If you have a strong opinion on ordering, open an issue at github.com/slothlabs/dataorbit.</Tip>
+      <H4>Cross-account / cross-connection joins</H4>
+      <P>Join tables from two different AWS connections (e.g. prod vs staging). Each side fetches independently and merges client-side.</P>
+
+      <H4>Filter groups with AND / OR logic</H4>
+      <P>Currently all chips use AND. v1.0 will add OR groups — useful for multi-value status filters like <InlineCode>status = WARN OR status = CRIT</InlineCode>.</P>
+
+      <H4>Clipboard IN values</H4>
+      <P>Paste a newline- or comma-separated list directly into the <InlineCode>in</InlineCode> operator. Useful for "which of these 50 IDs exist in this table."</P>
+
+      <H4>Saved queries &amp; templates</H4>
+      <P>Save named queries per table. DataOrbit auto-detects common patterns and offers them as one-click templates when you open a table.</P>
+
+      <H4>Regular expression filter (client-side)</H4>
+      <P>An extra in-memory filter step after fetching: regex match on any string field. Useful for substring patterns DynamoDB's <InlineCode>contains</InlineCode> can't express.</P>
+
+      <Tip>Prioritized roughly in this order. Open an issue at github.com/slothlabsorg/dataorbit if you have a strong opinion on ordering.</Tip>
     </div>
   )
 }
@@ -368,7 +389,7 @@ const SECTIONS: DocSection[] = [
   { id: 'query',       title: 'Query engine',           content: <SectionQueryEngine /> },
   { id: 'joins',       title: 'Cross-table joins',      content: <SectionCrossJoin /> },
   { id: 'concepts',    title: 'DynamoDB concepts',      content: <SectionDynamoConcepts /> },
-  { id: 'roadmap',     title: 'v0.2.0 — query roadmap', content: <SectionRoadmap /> },
+  { id: 'roadmap',     title: 'v1.0.0 — roadmap',        content: <SectionRoadmap /> },
   { id: 'cloudorbit',  title: 'CloudOrbit integration', content: <SectionCloudOrbit /> },
   { id: 'keyboard',    title: 'Keyboard shortcuts',     content: <SectionKeyboard /> },
 ]

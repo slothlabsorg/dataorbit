@@ -29,18 +29,46 @@ export const api = {
 
   // ── DynamoDB ─────────────────────────────────────────────────────────────
   listTables: (connectionId: string) =>
-    invoke<TableMeta[]>('list_tables', { connection_id: connectionId }),
+    invoke<TableMeta[]>('list_tables', { connectionId }),
 
   queryTable: (def: QueryDef) =>
     invoke<QueryResult>('query_table', { def }),
 
   getTableSchema: (connectionId: string, table: string) =>
-    invoke<TableMeta>('get_table_schema', { connection_id: connectionId, table }),
+    invoke<TableMeta>('get_table_schema', { connectionId, table }),
 
   // ── Stream ────────────────────────────────────────────────────────────────
   startStream: (connectionId: string, table: string) =>
-    invoke<void>('start_stream', { connection_id: connectionId, table }),
+    invoke<void>('start_stream', { connectionId, table }),
 
   stopStream: (connectionId: string) =>
-    invoke<void>('stop_stream', { connection_id: connectionId }),
+    invoke<void>('stop_stream', { connectionId }),
+
+  // ── AWS ───────────────────────────────────────────────────────────────────
+  listAwsProfiles: () =>
+    invoke<string[]>('list_aws_profiles'),
+
+  listAwsProfilesRich: () =>
+    invoke<{ name: string; region: string | null; hasCredentials: boolean }[]>('list_aws_profiles_rich'),
+
+  testDynamo: (region: string, profile: string | null, endpoint: string | null) =>
+    invoke<boolean>('test_dynamo_config', { region, profile, endpoint }),
+
+  pingConnection: (id: string) =>
+    invoke<{ ok: boolean; error?: string }>('test_connection', { id }),
+
+  putItem: (connectionId: string, table: string, item: Record<string, unknown>) =>
+    invoke<void>('put_item', { connectionId, table, item }),
+
+  deleteItem: (connectionId: string, table: string, key: Record<string, unknown>) =>
+    invoke<void>('delete_item', { connectionId, table, key }),
+
+  // ── Shell ─────────────────────────────────────────────────────────────────
+  openExternalUrl: async (url: string): Promise<void> => {
+    try {
+      await invoke<void>('open_external_url', { url })
+    } catch {
+      window.open(url, '_blank')
+    }
+  },
 }

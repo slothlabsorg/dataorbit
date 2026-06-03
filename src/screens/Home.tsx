@@ -6,8 +6,12 @@ import { EmptyState } from '@/components/ui/EmptyState'
 
 interface HomeProps {
   connections: DbConnection[]
+  connErrors: Record<string, string>
   onSelectConnection: (id: string) => void
   onAddConnection: () => void
+  onDeleteConnection: (id: string) => void
+  onConnectConnection: (id: string) => void
+  onEditConnection: (id: string) => void
 }
 
 function formatBytes(bytes: number) {
@@ -17,7 +21,9 @@ function formatBytes(bytes: number) {
   return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`
 }
 
-function ConnectionCard({ conn, onSelect }: { conn: DbConnection; onSelect: () => void }) {
+function ConnectionCard({ conn, onSelect, onDelete, onConnect, onEdit, errorMsg }: {
+  conn: DbConnection; onSelect: () => void; onDelete: () => void; onConnect: () => void; onEdit: () => void; errorMsg?: string
+}) {
   const totalItems  = conn.tables?.reduce((a, t) => a + (t.itemCount ?? 0), 0) ?? 0
   const totalBytes  = conn.tables?.reduce((a, t) => a + (t.sizeBytes ?? 0), 0) ?? 0
   const tableCount  = conn.tables?.length ?? 0
@@ -37,14 +43,25 @@ function ConnectionCard({ conn, onSelect }: { conn: DbConnection; onSelect: () =
           <span className="text-text-primary font-semibold text-sm truncate">{conn.name}</span>
           {conn.isFavorite && <span className="text-warning text-xs">★</span>}
         </div>
-        <div className="flex items-center gap-1.5 flex-shrink-0">
-          <StatusDot status={conn.status} />
-          <span className={`text-[11px] capitalize ${
-            conn.status === 'connected'   ? 'text-success' :
-            conn.status === 'connecting'  ? 'text-warning' :
-            conn.status === 'error'       ? 'text-danger'  :
-            'text-text-muted'
-          }`}>{conn.status}</span>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <div className="flex items-center gap-1.5">
+            <StatusDot status={conn.status} />
+            <span className={`text-[11px] capitalize ${
+              conn.status === 'connected'   ? 'text-success' :
+              conn.status === 'connecting'  ? 'text-warning' :
+              conn.status === 'error'       ? 'text-danger'  :
+              'text-text-muted'
+            }`}>{conn.status}</span>
+          </div>
+          <button
+            onClick={e => { e.stopPropagation(); onDelete() }}
+            className="opacity-0 group-hover:opacity-100 p-1 rounded text-text-muted hover:text-danger hover:bg-danger/10 transition-all"
+            aria-label="Delete connection"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/>
+            </svg>
+          </button>
         </div>
       </div>
 
@@ -79,7 +96,31 @@ function ConnectionCard({ conn, onSelect }: { conn: DbConnection; onSelect: () =
           </div>
         </div>
       ) : (
-        <p className="text-text-muted text-xs">No tables loaded yet</p>
+        <div className="space-y-2">
+          {errorMsg && (
+            <p className="text-danger text-[10px] font-mono leading-snug break-all">{errorMsg}</p>
+          )}
+          <div className="flex items-center justify-between">
+            <p className="text-text-muted text-xs">
+              {conn.status === 'connecting' ? 'Connecting…' : conn.status === 'error' ? 'Connection failed' : 'No tables loaded yet'}
+            </p>
+            {conn.status === 'error' ? (
+              <button
+                onClick={e => { e.stopPropagation(); onEdit() }}
+                className="text-[11px] px-2 py-0.5 rounded border border-warning/50 text-warning hover:bg-warning/10 transition-colors"
+              >
+                Edit & retry
+              </button>
+            ) : conn.status === 'disconnected' ? (
+              <button
+                onClick={e => { e.stopPropagation(); onConnect() }}
+                className="text-[11px] px-2 py-0.5 rounded border border-primary/40 text-primary hover:bg-primary/10 transition-colors"
+              >
+                Connect
+              </button>
+            ) : null}
+          </div>
+        </div>
       )}
 
       {/* Stream indicator */}
@@ -100,7 +141,7 @@ function ConnectionCard({ conn, onSelect }: { conn: DbConnection; onSelect: () =
   )
 }
 
-export function Home({ connections, onSelectConnection, onAddConnection }: HomeProps) {
+export function Home({ connections, connErrors, onSelectConnection, onAddConnection, onDeleteConnection, onConnectConnection, onEditConnection }: HomeProps) {
   if (connections.length === 0) {
     return (
       <div className="h-full flex items-center justify-center">
@@ -133,7 +174,14 @@ export function Home({ connections, onSelectConnection, onAddConnection }: HomeP
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: i * 0.05 }}
             >
-              <ConnectionCard conn={conn} onSelect={() => onSelectConnection(conn.id)} />
+              <ConnectionCard
+                conn={conn}
+                errorMsg={connErrors[conn.id]}
+                onSelect={() => onSelectConnection(conn.id)}
+                onDelete={() => onDeleteConnection(conn.id)}
+                onConnect={() => onConnectConnection(conn.id)}
+                onEdit={() => onEditConnection(conn.id)}
+              />
             </motion.div>
           ))}
         </div>

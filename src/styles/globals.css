@@ -23,6 +23,11 @@
 
   /* Selection */
   ::selection { background: rgba(139,92,246,0.3); color: #f5f3ff; }
+
+  /* Titlebar drag region — required by WebKit/Tauri for window dragging */
+  [data-tauri-drag-region] { -webkit-app-region: drag; }
+  [data-tauri-drag-region] button,
+  [data-tauri-drag-region] a { -webkit-app-region: no-drag; }
 }
 
 @layer components {

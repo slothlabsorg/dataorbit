@@ -215,7 +215,11 @@ pub async fn list_tables(connection_id: String) -> Result<Vec<TableMetaOut>, Str
 
     let client = build_dynamo_client(&conn).await.map_err(|e| e.to_string())?;
 
-    let mut tables = Vec::new();
+    // Only fetch table names — no describe_table per-table. Accounts with 100+
+    // tables would otherwise make 100+ sequential API calls just to list them.
+    // Schema (pk, sk, indexes) is loaded on-demand via get_table_schema when
+    // the user selects a specific table.
+    let mut names: Vec<String> = Vec::new();
     let mut last = None::<String>;
 
     loop {
@@ -224,66 +228,22 @@ pub async fn list_tables(connection_id: String) -> Result<Vec<TableMetaOut>, Str
             req = req.exclusive_start_table_name(lek);
         }
         let resp = req.send().await.map_err(|e| e.to_string())?;
-        let names = resp.table_names().to_vec();
+        names.extend(resp.table_names().iter().cloned());
         let done = resp.last_evaluated_table_name().is_none();
         last = resp.last_evaluated_table_name().map(|s| s.to_string());
-
-        for name in names {
-            let desc = client.describe_table().table_name(&name).send().await
-                .map_err(|e| e.to_string())?;
-            if let Some(t) = desc.table() {
-                let partition_key = key_attr(t.key_schema(), &KeyType::Hash);
-                let sort_key      = key_attr(t.key_schema(), &KeyType::Range);
-
-                let billing_mode = t.billing_mode_summary()
-                    .and_then(|b| b.billing_mode())
-                    .map(|b| format!("{:?}", b));
-
-                let stream_enabled = t.stream_specification()
-                    .map(|s| s.stream_enabled())
-                    .unwrap_or(false);
-
-                let mut indexes: Vec<IndexMetaOut> = t.global_secondary_indexes().iter()
-                    .map(|gsi| IndexMetaOut {
-                        name:          gsi.index_name().unwrap_or("").to_string(),
-                        index_type:    "GSI".into(),
-                        partition_key: key_attr(gsi.key_schema(), &KeyType::Hash).unwrap_or_default(),
-                        sort_key:      key_attr(gsi.key_schema(), &KeyType::Range),
-                        projection:    gsi.projection()
-                            .and_then(|p| p.projection_type())
-                            .map(|pt| format!("{:?}", pt))
-                            .unwrap_or_else(|| "ALL".into()),
-                    })
-                    .collect();
-
-                indexes.extend(t.local_secondary_indexes().iter().map(|lsi| IndexMetaOut {
-                    name:          lsi.index_name().unwrap_or("").to_string(),
-                    index_type:    "LSI".into(),
-                    partition_key: key_attr(lsi.key_schema(), &KeyType::Hash).unwrap_or_default(),
-                    sort_key:      key_attr(lsi.key_schema(), &KeyType::Range),
-                    projection:    lsi.projection()
-                        .and_then(|p| p.projection_type())
-                        .map(|pt| format!("{:?}", pt))
-                        .unwrap_or_else(|| "ALL".into()),
-                }));
-
-                tables.push(TableMetaOut {
-                    name,
-                    item_count: t.item_count(),
-                    size_bytes: t.table_size_bytes(),
-                    partition_key,
-                    sort_key,
-                    billing_mode,
-                    stream_enabled,
-                    indexes,
-                });
-            }
-        }
-
         if done { break; }
     }
 
-    Ok(tables)
+    Ok(names.into_iter().map(|name| TableMetaOut {
+        name,
+        item_count:    None,
+        size_bytes:    None,
+        partition_key: None,
+        sort_key:      None,
+        billing_mode:  None,
+        stream_enabled: false,
+        indexes:       vec![],
+    }).collect())
 }
 
 // ── get_table_schema ──────────────────────────────────────────────────────────
@@ -303,6 +263,30 @@ pub async fn get_table_schema(connection_id: String, table: String) -> Result<Ta
 
     let t = desc.table().ok_or("No table description returned")?;
 
+    let mut indexes: Vec<IndexMetaOut> = t.global_secondary_indexes().iter()
+        .map(|gsi| IndexMetaOut {
+            name:          gsi.index_name().unwrap_or("").to_string(),
+            index_type:    "GSI".into(),
+            partition_key: key_attr(gsi.key_schema(), &KeyType::Hash).unwrap_or_default(),
+            sort_key:      key_attr(gsi.key_schema(), &KeyType::Range),
+            projection:    gsi.projection()
+                .and_then(|p| p.projection_type())
+                .map(|pt| format!("{:?}", pt))
+                .unwrap_or_else(|| "ALL".into()),
+        })
+        .collect();
+
+    indexes.extend(t.local_secondary_indexes().iter().map(|lsi| IndexMetaOut {
+        name:          lsi.index_name().unwrap_or("").to_string(),
+        index_type:    "LSI".into(),
+        partition_key: key_attr(lsi.key_schema(), &KeyType::Hash).unwrap_or_default(),
+        sort_key:      key_attr(lsi.key_schema(), &KeyType::Range),
+        projection:    lsi.projection()
+            .and_then(|p| p.projection_type())
+            .map(|pt| format!("{:?}", pt))
+            .unwrap_or_else(|| "ALL".into()),
+    }));
+
     Ok(TableMetaOut {
         name:          table,
         item_count:    t.item_count(),
@@ -315,7 +299,7 @@ pub async fn get_table_schema(connection_id: String, table: String) -> Result<Ta
         stream_enabled: t.stream_specification()
             .map(|s| s.stream_enabled())
             .unwrap_or(false),
-        indexes: vec![],
+        indexes,
     })
 }
 
@@ -454,6 +438,88 @@ pub async fn query_table(def: QueryDefIn) -> Result<QueryResultOut, String> {
         warnings,
         rows:               row_values,
     })
+}
+
+// ── put_item / delete_item ────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn put_item(
+    connection_id: String,
+    table: String,
+    item: serde_json::Value,
+) -> Result<(), String> {
+    let store = load_store();
+    let conn = store.connections.iter()
+        .find(|c| c.id == connection_id)
+        .ok_or_else(|| format!("Connection {} not found", connection_id))?
+        .clone();
+
+    let client = build_dynamo_client(&conn).await.map_err(|e| e.to_string())?;
+
+    let av_item = json_to_item(&item)?;
+
+    client.put_item()
+        .table_name(&table)
+        .set_item(Some(av_item))
+        .send()
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn delete_item(
+    connection_id: String,
+    table: String,
+    key: serde_json::Value,
+) -> Result<(), String> {
+    let store = load_store();
+    let conn = store.connections.iter()
+        .find(|c| c.id == connection_id)
+        .ok_or_else(|| format!("Connection {} not found", connection_id))?
+        .clone();
+
+    let client = build_dynamo_client(&conn).await.map_err(|e| e.to_string())?;
+
+    let av_key = json_to_item(&key)?;
+
+    client.delete_item()
+        .table_name(&table)
+        .set_key(Some(av_key))
+        .send()
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// Convert a serde_json::Value (object) into DynamoDB AttributeValue map.
+fn json_to_item(
+    val: &serde_json::Value,
+) -> Result<std::collections::HashMap<String, AttributeValue>, String> {
+    let obj = val.as_object()
+        .ok_or("Item must be a JSON object")?;
+    obj.iter()
+        .map(|(k, v)| json_val_to_av(v).map(|av| (k.clone(), av)))
+        .collect()
+}
+
+fn json_val_to_av(val: &serde_json::Value) -> Result<AttributeValue, String> {
+    match val {
+        serde_json::Value::String(s) => Ok(AttributeValue::S(s.clone())),
+        serde_json::Value::Number(n) => Ok(AttributeValue::N(n.to_string())),
+        serde_json::Value::Bool(b)   => Ok(AttributeValue::Bool(*b)),
+        serde_json::Value::Null      => Ok(AttributeValue::Null(true)),
+        serde_json::Value::Array(arr) => {
+            let items: Result<Vec<_>, _> = arr.iter().map(json_val_to_av).collect();
+            Ok(AttributeValue::L(items?))
+        }
+        serde_json::Value::Object(map) => {
+            let items: Result<std::collections::HashMap<_, _>, _> = map.iter()
+                .map(|(k, v)| json_val_to_av(v).map(|av| (k.clone(), av)))
+                .collect();
+            Ok(AttributeValue::M(items?))
+        }
+    }
 }
 
 // ── stream ────────────────────────────────────────────────────────────────────

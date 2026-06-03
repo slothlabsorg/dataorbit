@@ -1,12 +1,21 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import type { DbType, DbConnection } from '@/types'
+import { api } from '@/lib/tauri'
 import Button from './Button'
 import { Modal } from './Modal'
+
+export interface WizardInitial {
+  name?: string
+  awsProfile?: string
+  awsRegion?: string
+  endpoint?: string
+}
 
 interface AddConnectionWizardProps {
   onClose: () => void
   onSave: (conn: Omit<DbConnection, 'id' | 'status'>) => void
+  initialValues?: WizardInitial
 }
 
 type Step = 'type' | 'config' | 'test'
@@ -100,6 +109,38 @@ const AWS_REGIONS = [
   'sa-east-1', 'ca-central-1',
 ]
 
+function ProfileSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [profiles, setProfiles] = useState<string[]>([])
+  const listId = 'aws-profiles-list'
+
+  useEffect(() => {
+    api.listAwsProfiles()
+      .then(setProfiles)
+      .catch(() => {/* not in Tauri or no ~/.aws */})
+  }, [])
+
+  return (
+    <div>
+      <label className="block text-xs font-medium text-text-secondary mb-1">AWS Profile</label>
+      <input
+        list={listId}
+        className="field-input"
+        placeholder={profiles.length > 0 ? 'Select or type a profile…' : 'default'}
+        value={value}
+        onChange={e => onChange(e.target.value)}
+      />
+      <datalist id={listId}>
+        {profiles.map(p => <option key={p} value={p} />)}
+      </datalist>
+      <p className="text-text-muted text-[11px] mt-1">
+        {profiles.length > 0
+          ? `${profiles.length} profile${profiles.length !== 1 ? 's' : ''} found in ~/.aws`
+          : 'Profile from ~/.aws/credentials — works great with CloudOrbit sessions.'}
+      </p>
+    </div>
+  )
+}
+
 function StepConfigDynamo({ cfg, onChange }: { cfg: DynamoConfig; onChange: (c: Partial<DynamoConfig>) => void }) {
   return (
     <div className="space-y-4">
@@ -144,16 +185,7 @@ function StepConfigDynamo({ cfg, onChange }: { cfg: DynamoConfig; onChange: (c: 
       </div>
 
       {cfg.authMethod === 'profile' && (
-        <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1">AWS Profile</label>
-          <input
-            className="field-input"
-            placeholder="default"
-            value={cfg.awsProfile}
-            onChange={e => onChange({ awsProfile: e.target.value })}
-          />
-          <p className="text-text-muted text-[11px] mt-1">Profile from <code className="font-mono">~/.aws/credentials</code>. Works great with CloudOrbit sessions.</p>
-        </div>
+        <ProfileSelect value={cfg.awsProfile} onChange={v => onChange({ awsProfile: v })} />
       )}
 
       {cfg.authMethod === 'keys' && (
@@ -272,27 +304,43 @@ const STEP_LABELS: Record<Step, string> = {
   test:   'Test & save',
 }
 
-export function AddConnectionWizard({ onClose, onSave }: AddConnectionWizardProps) {
-  const [step, setStep]             = useState<Step>('type')
-  const [dbType, setDbType]         = useState<DbType | null>(null)
-  const [dynamo, setDynamo]         = useState<DynamoConfig>(defaultDynamo)
+export function AddConnectionWizard({ onClose, onSave, initialValues }: AddConnectionWizardProps) {
+  const hasInitial = !!initialValues
+
+  const [step, setStep]             = useState<Step>(hasInitial ? 'config' : 'type')
+  const [dbType, setDbType]         = useState<DbType | null>(hasInitial ? 'dynamodb' : null)
+  const [dynamo, setDynamo]         = useState<DynamoConfig>({
+    ...defaultDynamo,
+    ...(initialValues && {
+      name:       initialValues.name      ?? '',
+      awsProfile: initialValues.awsProfile ?? 'default',
+      awsRegion:  initialValues.awsRegion  ?? 'us-east-1',
+      endpoint:   initialValues.endpoint   ?? '',
+    }),
+  })
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'ok' | 'error'>('idle')
   const [testError, setTestError]   = useState<string>()
 
-  const steps: Step[] = ['type', 'config', 'test']
+  const steps: Step[] = hasInitial ? ['config', 'test'] : ['type', 'config', 'test']
   const stepIdx = steps.indexOf(step)
 
   async function handleTest() {
-    setTestStatus('testing')
-    setTestError(undefined)
-    // Simulate — real impl will call Tauri command
-    await new Promise(r => setTimeout(r, 1200))
-    if (!dynamo.name) {
+    if (!dynamo.name.trim()) {
       setTestStatus('error')
       setTestError('Connection name is required')
       return
     }
-    setTestStatus('ok')
+    setTestStatus('testing')
+    setTestError(undefined)
+    try {
+      const profile  = dynamo.authMethod === 'profile' ? (dynamo.awsProfile || null) : null
+      const endpoint = dynamo.endpoint || null
+      await api.testDynamo(dynamo.awsRegion, profile, endpoint)
+      setTestStatus('ok')
+    } catch (e) {
+      setTestStatus('error')
+      setTestError(e instanceof Error ? e.message : String(e))
+    }
   }
 
   function handleSave() {

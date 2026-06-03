@@ -1,6 +1,6 @@
 [package]
 name    = "dataorbit"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 
 [build-dependencies]
@@ -19,6 +19,12 @@ tokio              = { version = "1", features = ["rt-multi-thread", "macros"] }
 aws-sdk-dynamodb   = "1"
 aws-config         = { version = "1", features = ["behavior-version-latest"] }
 aws-credential-types = { version = "1", features = ["hardcoded-credentials"] }
+# Use native-tls so the OS/Keychain trust store is used (supports Zscaler, Netskope,
+# Cloudflare Zero Trust, and other SSL-inspection CAs). The default rustls client
+# uses webpki-roots (compiled-in Mozilla bundle) and misses corporate CA certs.
+aws-smithy-runtime = { version = "1", features = ["connector-hyper-0-14-x"] }
+hyper-tls          = "0.5"
+hyper              = { version = "0.14", features = ["client", "http1", "http2"] }
 
 # Utilities
 dirs       = "5"

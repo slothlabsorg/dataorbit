@@ -14,6 +14,8 @@ interface SidebarProps {
   onSelectConnection: (id: string) => void
   onSelectTable: (connId: string, table: string) => void
   onAddConnection: () => void
+  onDeleteConnection: (id: string) => void
+  newsUnread?: number
 }
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
@@ -103,6 +105,7 @@ function ConnectionItem({
   collapsed,
   onSelect,
   onSelectTable,
+  onDelete,
 }: {
   conn: DbConnection
   isActive: boolean
@@ -110,38 +113,57 @@ function ConnectionItem({
   collapsed: boolean
   onSelect: () => void
   onSelectTable: (table: string) => void
+  onDelete: () => void
 }) {
   const [open, setOpen] = useState(isActive)
+  const [tableSearch, setTableSearch] = useState('')
   const hasTables = (conn.tables?.length ?? 0) > 0
+  const filteredTables = tableSearch.trim()
+    ? (conn.tables ?? []).filter(t => t.name.toLowerCase().includes(tableSearch.toLowerCase()))
+    : (conn.tables ?? [])
 
   return (
-    <div>
-      <button
-        onClick={() => {
-          onSelect()
-          if (hasTables) setOpen(o => !o)
-        }}
-        className={`flex items-center gap-2 w-full px-2 py-1.5 rounded-md transition-colors text-left ${
-          isActive
-            ? 'bg-primary/10 text-text-primary'
-            : 'text-text-secondary hover:text-text-primary hover:bg-bg-surface'
-        }`}
-        style={{ width: collapsed ? '36px' : 'calc(100% - 8px)', margin: '0 4px' }}
-        title={collapsed ? conn.name : undefined}
-      >
-        <span className="flex-shrink-0"><IconDb type={conn.dbType} /></span>
+    <div className="group/conn">
+      <div className="flex items-center" style={{ margin: '0 4px' }}>
+        <button
+          onClick={() => {
+            onSelect()
+            if (hasTables) setOpen(o => !o)
+          }}
+          className={`flex items-center gap-2 flex-1 min-w-0 px-2 py-1.5 rounded-md transition-colors text-left ${
+            isActive
+              ? 'bg-primary/10 text-text-primary'
+              : 'text-text-secondary hover:text-text-primary hover:bg-bg-surface'
+          }`}
+          style={{ width: collapsed ? '36px' : undefined }}
+          title={collapsed ? conn.name : undefined}
+        >
+          <span className="flex-shrink-0"><IconDb type={conn.dbType} /></span>
+          {!collapsed && (
+            <>
+              <span className="flex-1 text-xs font-medium truncate">{conn.name}</span>
+              <StatusDot status={conn.status} />
+              {hasTables && (
+                <span className="flex-shrink-0 text-text-muted ml-0.5">
+                  <IconChevron open={open} />
+                </span>
+              )}
+            </>
+          )}
+        </button>
         {!collapsed && (
-          <>
-            <span className="flex-1 text-xs font-medium truncate">{conn.name}</span>
-            <StatusDot status={conn.status} />
-            {hasTables && (
-              <span className="flex-shrink-0 text-text-muted ml-0.5">
-                <IconChevron open={open} />
-              </span>
-            )}
-          </>
+          <button
+            onClick={e => { e.stopPropagation(); onDelete() }}
+            className="opacity-0 group-hover/conn:opacity-100 p-1 ml-0.5 rounded text-text-muted hover:text-danger hover:bg-danger/10 transition-all flex-shrink-0"
+            aria-label="Delete connection"
+            title="Delete connection"
+          >
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/>
+            </svg>
+          </button>
         )}
-      </button>
+      </div>
 
       <AnimatePresence initial={false}>
         {!collapsed && open && hasTables && (
@@ -152,24 +174,37 @@ function ConnectionItem({
             transition={{ duration: 0.15 }}
             className="overflow-hidden"
           >
-            <div className="ml-4 pl-2 border-l border-border-subtle py-0.5 space-y-0.5">
-              {conn.tables!.map(t => (
-                <button
-                  key={t.name}
-                  onClick={() => onSelectTable(t.name)}
-                  className={`flex items-center gap-1.5 w-full px-2 py-1 rounded transition-colors text-left ${
-                    activeTable === t.name && isActive
-                      ? 'bg-primary/8 text-primary'
-                      : 'text-text-muted hover:text-text-secondary hover:bg-bg-surface'
-                  }`}
-                >
-                  <IconTable />
-                  <span className="text-[11px] font-mono truncate">{t.name}</span>
-                  {t.streamEnabled && (
-                    <span className="ml-auto w-1 h-1 rounded-full bg-success flex-shrink-0" title="Streams enabled" />
-                  )}
-                </button>
-              ))}
+            <div className="ml-4 pl-2 border-l border-border-subtle pt-1">
+              {/* Search — always visible when there are tables */}
+              <input
+                value={tableSearch}
+                onChange={e => setTableSearch(e.target.value)}
+                placeholder="Filter tables…"
+                className="w-full bg-bg-surface border border-border-subtle rounded px-2 py-0.5 text-[10px] text-text-secondary placeholder:text-text-muted outline-none focus:border-primary/40 mb-1"
+                onClick={e => e.stopPropagation()}
+              />
+              <div className="max-h-48 overflow-y-auto space-y-0.5 pb-0.5">
+                {filteredTables.map(t => (
+                  <button
+                    key={t.name}
+                    onClick={() => onSelectTable(t.name)}
+                    className={`flex items-center gap-1.5 w-full px-2 py-1 rounded transition-colors text-left ${
+                      activeTable === t.name && isActive
+                        ? 'bg-primary/8 text-primary'
+                        : 'text-text-muted hover:text-text-secondary hover:bg-bg-surface'
+                    }`}
+                  >
+                    <IconTable />
+                    <span className="text-[11px] font-mono truncate">{t.name}</span>
+                    {t.streamEnabled && (
+                      <span className="ml-auto w-1 h-1 rounded-full bg-success flex-shrink-0" title="Streams enabled" />
+                    )}
+                  </button>
+                ))}
+                {filteredTables.length === 0 && tableSearch && (
+                  <p className="text-[10px] text-text-muted px-2 py-1 italic">No match</p>
+                )}
+              </div>
             </div>
           </motion.div>
         )}
@@ -180,14 +215,6 @@ function ConnectionItem({
 
 // ── Nav items ─────────────────────────────────────────────────────────────────
 
-function IconHome() {
-  return (
-    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>
-      <polyline points="9 22 9 12 15 12 15 22"/>
-    </svg>
-  )
-}
 
 function IconBrowse() {
   return (
@@ -226,12 +253,31 @@ function IconHistory() {
   )
 }
 
+function IconNews() {
+  return (
+    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M4 22h16a2 2 0 002-2V4a2 2 0 00-2-2H8a2 2 0 00-2 2v16a2 2 0 01-2 2zm0 0a2 2 0 01-2-2v-9c0-1.1.9-2 2-2h2"/>
+      <path d="M18 14h-8M15 18h-5M10 6h8v4h-8z"/>
+    </svg>
+  )
+}
+
+function IconOrbit() {
+  return (
+    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <circle cx="12" cy="12" r="3"/>
+      <ellipse cx="12" cy="12" rx="10" ry="4.5" strokeDasharray="3 2"/>
+    </svg>
+  )
+}
+
 const topNav = [
-  { id: 'home'    as Screen, label: 'Home',    icon: <IconHome /> },
+  { id: 'orbit'   as Screen, label: 'Orbit',   icon: <IconOrbit /> },
   { id: 'browse'  as Screen, label: 'Browse',  icon: <IconBrowse /> },
   { id: 'explore' as Screen, label: 'Explore', icon: <IconExplore /> },
   { id: 'stream'  as Screen, label: 'Stream',  icon: <IconStream /> },
   { id: 'history' as Screen, label: 'History', icon: <IconHistory /> },
+  { id: 'news'    as Screen, label: 'News',    icon: <IconNews /> },
 ]
 
 const bottomNav = [
@@ -245,7 +291,8 @@ const bottomNav = [
 export function Sidebar({
   screen, onNavigate, collapsed, onToggleCollapse,
   connections, activeConnectionId, activeTable,
-  onSelectConnection, onSelectTable, onAddConnection,
+  onSelectConnection, onSelectTable, onAddConnection, onDeleteConnection,
+  newsUnread = 0,
 }: SidebarProps) {
   const w = collapsed ? 48 : 200
 
@@ -257,22 +304,36 @@ export function Sidebar({
     >
       {/* Top nav */}
       <div className="py-2 border-b border-border-subtle flex-shrink-0">
-        {topNav.map(item => (
-          <button
-            key={item.id}
-            onClick={() => onNavigate(item.id)}
-            className={`flex items-center gap-3 w-full transition-colors rounded-lg mx-1 px-3 py-1.5 ${
-              screen === item.id
-                ? 'bg-primary/10 text-primary'
-                : 'text-text-secondary hover:text-text-primary hover:bg-bg-surface'
-            }`}
-            style={{ width: 'calc(100% - 8px)' }}
-            title={collapsed ? item.label : undefined}
-          >
-            <span className="flex-shrink-0 w-4 h-4 flex items-center justify-center">{item.icon}</span>
-            {!collapsed && <span className="text-xs font-medium whitespace-nowrap">{item.label}</span>}
-          </button>
-        ))}
+        {topNav.map(item => {
+          const badge = item.id === 'news' && newsUnread > 0 ? newsUnread : undefined
+          const isActive = screen === item.id
+          return (
+            <button
+              key={item.id}
+              onClick={() => onNavigate(item.id)}
+              className={`flex items-center gap-3 w-full transition-colors rounded-lg mx-1 px-3 py-1.5 ${
+                isActive
+                  ? 'bg-primary/10 text-primary'
+                  : 'text-text-secondary hover:text-text-primary hover:bg-bg-surface'
+              }`}
+              style={{ width: 'calc(100% - 8px)' }}
+              title={collapsed ? item.label : undefined}
+            >
+              <span className="relative flex-shrink-0 w-4 h-4 flex items-center justify-center">
+                {item.icon}
+                {badge !== undefined && badge > 0 && (
+                  <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-primary border border-bg-elevated" />
+                )}
+              </span>
+              {!collapsed && <span className="text-xs font-medium whitespace-nowrap flex-1">{item.label}</span>}
+              {!collapsed && badge !== undefined && badge > 0 && !isActive && (
+                <span className="ml-auto text-[9px] font-mono bg-primary/15 text-primary rounded px-1 py-0.5 flex-shrink-0">
+                  {badge > 9 ? '9+' : badge}
+                </span>
+              )}
+            </button>
+          )
+        })}
       </div>
 
       {/* Connections section */}
@@ -313,6 +374,7 @@ export function Sidebar({
               collapsed={collapsed}
               onSelect={() => onSelectConnection(conn.id)}
               onSelectTable={(t) => onSelectTable(conn.id, t)}
+              onDelete={() => onDeleteConnection(conn.id)}
             />
           ))}
         </div>

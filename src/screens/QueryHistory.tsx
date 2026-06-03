@@ -4,7 +4,6 @@ import type { HistoryEntry } from '@/types'
 import { RcuBadge } from '@/components/ui/Badge'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { formatRelative } from '@/lib/time'
-import { mockHistory } from '@/mock/data'
 
 interface QueryHistoryProps {
   onRunQuery?: (entry: HistoryEntry) => void
@@ -17,7 +16,7 @@ const OP_LABELS: Record<string, string> = {
 }
 
 export function QueryHistory({ onRunQuery }: QueryHistoryProps) {
-  const [entries] = useState<HistoryEntry[]>(mockHistory)
+  const [entries] = useState<HistoryEntry[]>([])
   const [search, setSearch] = useState('')
 
   const filtered = entries.filter(e =>

@@ -1,5 +1,5 @@
 // ── Screens ──────────────────────────────────────────────────────────────────
-export type Screen = 'home' | 'browse' | 'explore' | 'stream' | 'history' | 'settings' | 'docs' | 'support'
+export type Screen = 'home' | 'orbit' | 'browse' | 'explore' | 'stream' | 'history' | 'news' | 'settings' | 'docs' | 'support'
 
 // ── Database types ────────────────────────────────────────────────────────────
 export type DbType = 'dynamodb' | 'influxdb' | 'timescaledb' | 'cassandra' | 'scylladb'

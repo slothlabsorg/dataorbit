@@ -6,9 +6,12 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DbConnection {
+    #[serde(default)]
     pub id: String,
     pub name: String,
+    #[serde(default)]
     pub db_type: String,
+    #[serde(default)]
     pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub aws_region: Option<String>,
@@ -114,20 +117,27 @@ pub async fn test_connection(id: String) -> Result<serde_json::Value, String> {
 }
 
 pub async fn build_dynamo_config(conn: &DbConnection) -> anyhow::Result<aws_config::SdkConfig> {
-    use aws_config::meta::region::RegionProviderChain;
-
     let region = conn.aws_region.as_deref().unwrap_or("us-east-1");
-    let region_provider = RegionProviderChain::first_try(
-        aws_config::Region::new(region.to_string())
-    );
+    Ok(crate::aws_http::build_sdk_config(region, conn.aws_profile.as_deref()).await)
+}
 
-    let mut loader = aws_config::from_env().region(region_provider);
-
-    if let Some(profile) = &conn.aws_profile {
-        loader = loader.profile_name(profile);
+/// Test a DynamoDB connection config without persisting it to the store.
+/// Returns Ok(true) on success or Err(message) on failure.
+#[tauri::command]
+pub async fn test_dynamo_config(
+    region: String,
+    profile: Option<String>,
+    endpoint: Option<String>,
+) -> Result<bool, String> {
+    let cfg = crate::aws_http::build_sdk_config(&region, profile.as_deref()).await;
+    let mut builder = aws_sdk_dynamodb::config::Builder::from(&cfg);
+    if let Some(ep) = endpoint.as_deref().filter(|e| !e.is_empty()) {
+        builder = builder.endpoint_url(ep);
     }
-
-    Ok(loader.load().await)
+    let client = aws_sdk_dynamodb::Client::from_conf(builder.build());
+    client.list_tables().limit(1).send().await
+        .map(|_| true)
+        .map_err(|e| e.to_string())
 }
 
 /// Build a DynamoDB client, applying endpoint_url override for DynamoDB Local.

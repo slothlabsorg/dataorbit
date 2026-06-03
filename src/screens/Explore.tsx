@@ -7,6 +7,7 @@ import { Callout } from '@/components/ui/Callout'
 import Button from '@/components/ui/Button'
 import { mockRows, mockRegistryRows, mockAlertRows, mockLocationRows } from '@/mock/data'
 import { api } from '@/lib/tauri'
+import { downloadJson, downloadCsv } from '@/lib/export'
 
 const MOCK_MODE = (() => {
   try { return new URL(window.location.href).searchParams.get('mock') === '1' } catch { return false }
@@ -15,6 +16,7 @@ const MOCK_MODE = (() => {
 interface ExploreProps {
   activeConnection: DbConnection | null
   activeTable: string | null
+  onUpdateSchema?: (connId: string, tableName: string, attrs: string[]) => void
 }
 
 const OPS: FilterOp[] = ['=', '!=', '<', '<=', '>', '>=', 'begins_with', 'contains', 'exists', 'not_exists', 'between', 'in']
@@ -215,6 +217,47 @@ function FilterChipBadge({ chip, onRemove }: { chip: FilterChip; onRemove: () =>
   )
 }
 
+// Timestamp field detection (mirrors TIMESTAMP_CANDIDATES defined later for TraceTab)
+const TS_FIELD_NAMES = new Set([
+  'timestamp','createdAt','updatedAt','eventTime','ts','time',
+  'insertedAt','processedAt','signupAt','registeredAt','lastLoginAt',
+  'installedAt','resolvedAt','date',
+])
+const NUMERIC_TS_NAMES = new Set(['timestamp','ts','eventTime','time'])
+
+function isTimestampField(f: string) { return TS_FIELD_NAMES.has(f) }
+function isNumericTs(f: string)      { return NUMERIC_TS_NAMES.has(f) }
+
+// Convert datetime-local string to DynamoDB-compatible value
+function dtLocalToValue(dtStr: string, field: string): string {
+  if (!dtStr) return ''
+  const ms = new Date(dtStr).getTime()
+  return isNumericTs(field) ? String(ms) : new Date(dtStr).toISOString()
+}
+function valueToDtLocal(val: string, field: string): string {
+  if (!val) return ''
+  try {
+    const d = isNumericTs(field) ? new Date(Number(val)) : new Date(val)
+    const pad = (n: number) => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+  } catch { return '' }
+}
+
+function DateInput({ label, value, field, onChange }: { label: string; value: string; field: string; onChange: (v: string) => void }) {
+  const dtLocal = valueToDtLocal(value, field)
+  return (
+    <div className="flex flex-col gap-1">
+      <label className="text-[11px] text-text-muted">{label}</label>
+      <input
+        type="datetime-local"
+        className="field-input w-48 font-mono text-[11px]"
+        value={dtLocal}
+        onChange={e => onChange(dtLocalToValue(e.target.value, field))}
+      />
+    </div>
+  )
+}
+
 function FilterBuilder({ onAdd, attributes }: { onAdd: (chip: FilterChip) => void; attributes?: string[] }) {
   const [field, setField]   = useState('')
   const [op, setOp]         = useState<FilterOp>('=')
@@ -227,8 +270,9 @@ function FilterBuilder({ onAdd, attributes }: { onAdd: (chip: FilterChip) => voi
     setField(''); setValue(''); setValue2('')
   }
 
-  const noValue = op === 'exists' || op === 'not_exists'
-  const listId  = attributes && attributes.length > 0 ? 'field-attr-list' : undefined
+  const noValue  = op === 'exists' || op === 'not_exists'
+  const listId   = attributes && attributes.length > 0 ? 'field-attr-list' : undefined
+  const useDate  = isTimestampField(field) && ['=', '<', '<=', '>', '>=', 'between'].includes(op)
 
   return (
     <div className="flex items-end gap-2 flex-wrap">
@@ -239,7 +283,7 @@ function FilterBuilder({ onAdd, attributes }: { onAdd: (chip: FilterChip) => voi
       )}
       <div className="flex flex-col gap-1">
         <label className="text-[11px] text-text-muted">Field</label>
-        <input list={listId} className="field-input w-32" placeholder="deviceId" value={field}
+        <input list={listId} className="field-input w-32" placeholder="field name" value={field}
           onChange={e => setField(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleAdd()} />
       </div>
       <div className="flex flex-col gap-1">
@@ -249,27 +293,128 @@ function FilterBuilder({ onAdd, attributes }: { onAdd: (chip: FilterChip) => voi
         </select>
       </div>
       {!noValue && (
-        <div className="flex flex-col gap-1">
-          <label className="text-[11px] text-text-muted">Value</label>
-          <input className="field-input w-36" placeholder="sensor-4421" value={value}
-            onChange={e => setValue(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleAdd()} />
-        </div>
+        useDate ? (
+          <DateInput label="Value" value={value} field={field} onChange={setValue} />
+        ) : (
+          <div className="flex flex-col gap-1">
+            <label className="text-[11px] text-text-muted">Value</label>
+            <input className="field-input w-36" placeholder="field value" value={value}
+              onChange={e => setValue(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleAdd()} />
+          </div>
+        )
       )}
       {op === 'between' && (
-        <div className="flex flex-col gap-1">
-          <label className="text-[11px] text-text-muted">End value</label>
-          <input className="field-input w-36" placeholder="end" value={value2}
-            onChange={e => setValue2(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleAdd()} />
-        </div>
+        useDate ? (
+          <DateInput label="End" value={value2} field={field} onChange={setValue2} />
+        ) : (
+          <div className="flex flex-col gap-1">
+            <label className="text-[11px] text-text-muted">End value</label>
+            <input className="field-input w-36" placeholder="end" value={value2}
+              onChange={e => setValue2(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleAdd()} />
+          </div>
+        )
       )}
       <Button variant="secondary" size="sm" onClick={handleAdd} disabled={!field.trim()}>+ Add filter</Button>
     </div>
   )
 }
 
+// ── Time preset bar ───────────────────────────────────────────────────────────
+
+function TimePresetBar({ timestampField, allFields, onApply }: {
+  timestampField: string | null
+  allFields: string[]
+  onApply: (minutes: number, field?: string) => void
+}) {
+  const [customN, setCustomN]       = useState('30')
+  const [customUnit, setCustomUnit] = useState<'minutes' | 'hours' | 'days'>('minutes')
+  const [showCustom, setShowCustom] = useState(false)
+  const [fieldOverride, setFieldOverride] = useState<string>('')
+
+  const effectiveField = fieldOverride || timestampField
+
+  const presets = [
+    { label: '10m',  min: 10    },
+    { label: '1h',   min: 60    },
+    { label: '24h',  min: 1440  },
+    { label: '7d',   min: 10080 },
+  ]
+
+  const unitsToMin = { minutes: 1, hours: 60, days: 1440 }
+
+  return (
+    <div className="flex items-center gap-2 flex-wrap">
+      <span className="text-[11px] text-text-muted flex-shrink-0">Time range:</span>
+
+      {/* If no timestamp field detected, show field selector */}
+      {!timestampField && (
+        <select
+          value={fieldOverride}
+          onChange={e => setFieldOverride(e.target.value)}
+          className="field-input w-36 text-[11px] py-0.5"
+        >
+          <option value="">Pick datetime field…</option>
+          {allFields.map(f => <option key={f} value={f}>{f}</option>)}
+        </select>
+      )}
+
+      {presets.map(p => (
+        <button
+          key={p.min}
+          onClick={() => effectiveField && onApply(p.min, effectiveField || undefined)}
+          disabled={!effectiveField}
+          className="px-2 py-0.5 text-[11px] rounded border border-border text-text-muted hover:border-primary/40 hover:text-primary disabled:opacity-30 transition-colors"
+        >
+          {p.label}
+        </button>
+      ))}
+
+      <button
+        onClick={() => setShowCustom(s => !s)}
+        className={`px-2 py-0.5 text-[11px] rounded border transition-colors ${
+          showCustom ? 'border-primary/40 text-primary bg-primary/8' : 'border-border text-text-muted hover:border-primary/40 hover:text-primary'
+        }`}
+      >
+        Custom…
+      </button>
+
+      {showCustom && (
+        <div className="flex items-center gap-1.5">
+          <input
+            type="number"
+            min={1} max={999}
+            value={customN}
+            onChange={e => setCustomN(e.target.value)}
+            className="field-input w-16 text-[11px] py-0.5"
+          />
+          <select
+            value={customUnit}
+            onChange={e => setCustomUnit(e.target.value as typeof customUnit)}
+            className="field-input w-24 text-[11px] py-0.5"
+          >
+            <option value="minutes">Minutes</option>
+            <option value="hours">Hours</option>
+            <option value="days">Days</option>
+          </select>
+          <button
+            onClick={() => {
+              const mins = Number(customN) * unitsToMin[customUnit]
+              if (effectiveField) onApply(mins, effectiveField || undefined)
+            }}
+            disabled={!effectiveField || !customN}
+            className="px-2 py-0.5 text-[11px] rounded border border-primary/40 text-primary hover:bg-primary/10 disabled:opacity-30 transition-colors"
+          >
+            Apply
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Single-table query tab ────────────────────────────────────────────────────
 
-function QueryTab({ activeConnection, activeTable }: ExploreProps) {
+function QueryTab({ activeConnection, activeTable, onUpdateSchema }: ExploreProps) {
   const [chips, setChips]       = useState<FilterChip[]>([])
   const [limit, setLimit]       = useState(50)
   const [ascending, setAscending] = useState(true)
@@ -300,20 +445,43 @@ function QueryTab({ activeConnection, activeTable }: ExploreProps) {
   }
 
   const table    = activeConnection.tables?.find(t => t.name === activeTable)
+
+  // Load schema on table change if pk not yet known, and seed attribute autocomplete
+  useEffect(() => {
+    if (!activeConnection || !activeTable) return
+    const tbl = activeConnection.tables?.find(t => t.name === activeTable)
+    if (tbl?.partitionKey) return  // already have schema
+    api.getTableSchema(activeConnection.id, activeTable)
+      .then(schema => {
+        const attrs = [
+          schema.partitionKey,
+          schema.sortKey,
+          ...(schema.indexes ?? []).flatMap(idx => [idx.partitionKey, idx.sortKey]),
+        ].filter(Boolean) as string[]
+        onUpdateSchema?.(activeConnection.id, activeTable, attrs)
+      })
+      .catch(() => {})
+  }, [activeConnection?.id, activeTable])
+
   const pkField  = table?.partitionKey ?? 'pk'
   const skField  = table?.sortKey
   const isPkFilter = chips.some(c => c.field === pkField && c.op === '=')
   const opMode   = detectOpMode(chips, pkField)
   const rcu      = estimateRcu(opMode, table?.itemCount ?? 1000)
 
-  const isTimestampSk = skField === 'timestamp'
+  // Detect timestamp field — sk first, then pk
+  const timestampField = (skField && isTimestampField(skField)) ? skField
+    : (pkField && isTimestampField(pkField)) ? pkField
+    : null
 
-  function applyTimePreset(hours: number) {
+  function applyTimePreset(minutes: number, overrideField?: string) {
+    const field = overrideField ?? timestampField
+    if (!field) return
     const end   = Date.now()
-    const start = end - hours * 3_600_000
+    const start = end - minutes * 60_000
     setChips(cs => [
-      ...cs.filter(c => c.field !== skField),
-      { id: `chip-${++chipId}`, field: skField!, op: 'between', value: String(start), valueEnd: String(end) },
+      ...cs.filter(c => c.field !== field),
+      { id: `chip-${++chipId}`, field, op: 'between', value: String(start), valueEnd: String(end) },
     ])
   }
 
@@ -340,8 +508,19 @@ function QueryTab({ activeConnection, activeTable }: ExploreProps) {
         }
         const raw = await api.queryTable(def)
         setResult(raw)
-        setAllFiltered([])  // pagination not available in real mode yet
+        setAllFiltered([])
         setSuggestion(computeSuggestion(chips, opMode, pkField, raw, table?.itemCount ?? 0))
+        // Enrich field autocomplete from result attribute names
+        if (raw.rows.length > 0 && onUpdateSchema) {
+          const seen = new Set(Object.keys(raw.rows[0] as Record<string, unknown>))
+          const existing = new Set(table?.attributes ?? [])
+          const newAttrs = [...seen].filter(a => !existing.has(a))
+          if (newAttrs.length > 0) {
+            onUpdateSchema(activeConnection.id, activeTable!, [
+              ...(table?.attributes ?? []), ...newAttrs,
+            ])
+          }
+        }
       } catch (e) {
         setQueryError(e instanceof Error ? e.message : String(e))
       }
@@ -463,23 +642,12 @@ function QueryTab({ activeConnection, activeTable }: ExploreProps) {
         {/* Filter builder */}
         <FilterBuilder onAdd={chip => setChips(cs => [...cs, chip])} attributes={table?.attributes} />
 
-        {/* Time-range presets (only when sk = timestamp) */}
-        {isTimestampSk && (
-          <div className="flex items-center gap-2">
-            <span className="text-[11px] text-text-muted">Time presets:</span>
-            {[
-              { label: 'Last 1h',  h: 1   },
-              { label: 'Last 6h',  h: 6   },
-              { label: 'Last 24h', h: 24  },
-              { label: 'Last 7d',  h: 168 },
-            ].map(({ label, h }) => (
-              <button key={h} onClick={() => applyTimePreset(h)}
-                className="px-2 py-0.5 text-[11px] rounded border border-border text-text-muted hover:border-primary/40 hover:text-primary transition-colors">
-                {label}
-              </button>
-            ))}
-          </div>
-        )}
+        {/* Time-range presets */}
+        <TimePresetBar
+          timestampField={timestampField}
+          allFields={[pkField, ...(skField ? [skField] : []), ...(table?.attributes ?? [])].filter(Boolean)}
+          onApply={applyTimePreset}
+        />
 
         {/* Scan warning */}
         {opMode === 'Scan' && chips.length > 0 && (
@@ -499,13 +667,27 @@ function QueryTab({ activeConnection, activeTable }: ExploreProps) {
             {result.rcuConsumed != null && <RcuBadge rcu={result.rcuConsumed} />}
             <span className="font-mono">{result.executionMs}ms</span>
             {result.warnings?.map((w, i) => <span key={i} className="text-warning">⚠ {w}</span>)}
-            <div className="ml-auto flex items-center gap-1 bg-bg-surface rounded-lg p-0.5">
-              {(['table', 'json'] as const).map(m => (
-                <button key={m} onClick={() => setViewMode(m)}
-                  className={`px-2 py-0.5 rounded text-xs transition-colors ${viewMode === m ? 'bg-bg-overlay text-text-primary' : 'text-text-muted hover:text-text-secondary'}`}>
-                  {m}
-                </button>
-              ))}
+            <div className="ml-auto flex items-center gap-2">
+              {result.rows.length > 0 && (
+                <div className="flex items-center gap-1">
+                  <button onClick={() => downloadJson(result!.rows, `${activeTable ?? 'export'}.json`)}
+                    className="px-1.5 py-0.5 rounded border border-border text-[10px] text-text-muted hover:border-primary/40 hover:text-primary transition-colors">
+                    JSON ↓
+                  </button>
+                  <button onClick={() => downloadCsv(result!.rows as Record<string, unknown>[], `${activeTable ?? 'export'}.csv`)}
+                    className="px-1.5 py-0.5 rounded border border-border text-[10px] text-text-muted hover:border-primary/40 hover:text-primary transition-colors">
+                    CSV ↓
+                  </button>
+                </div>
+              )}
+              <div className="flex items-center gap-1 bg-bg-surface rounded-lg p-0.5">
+                {(['table', 'json'] as const).map(m => (
+                  <button key={m} onClick={() => setViewMode(m)}
+                    className={`px-2 py-0.5 rounded text-xs transition-colors ${viewMode === m ? 'bg-bg-overlay text-text-primary' : 'text-text-muted hover:text-text-secondary'}`}>
+                    {m}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         )}
@@ -689,40 +871,113 @@ function CrossJoinTab({ connection }: { connection: DbConnection }) {
 
   const [leftTable,  setLeftTable]  = useState(tableNames[0] ?? '')
   const [rightTable, setRightTable] = useState(tableNames[2] ?? tableNames[1] ?? tableNames[0] ?? '')
-  const [leftField,  setLeftField]  = useState('deviceId')
-  const [rightField, setRightField] = useState('deviceId')
+  const [leftField,  setLeftField]  = useState('')
+  const [rightField, setRightField] = useState('')
   const [joinType,   setJoinType]   = useState<JoinType>('left_anti')
   const [result,     setResult]     = useState<JoinResult | null>(null)
   const [loading,    setLoading]    = useState(false)
 
+  // Index pre-filter — reduces rows fetched before the join
+  const [leftIndex,       setLeftIndex]       = useState('')
+  const [rightIndex,      setRightIndex]      = useState('')
+  const [leftPreField,    setLeftPreField]    = useState('')
+  const [leftPreValue,    setLeftPreValue]    = useState('')
+  const [rightPreField,   setRightPreField]   = useState('')
+  const [rightPreValue,   setRightPreValue]   = useState('')
+
+  const leftMeta  = tables.find(t => t.name === leftTable)
+  const rightMeta = tables.find(t => t.name === rightTable)
+  const leftIndexes  = leftMeta?.indexes  ?? []
+  const rightIndexes = rightMeta?.indexes ?? []
+
   const sameTable = leftTable === rightTable
+
+  const [joinError, setJoinError] = useState<string | null>(null)
+  const [leftCols, setLeftCols]   = useState<string[]>([])
+  const [rightCols, setRightCols] = useState<string[]>([])
+  const rightOnlyCols = rightCols.filter(c => !leftCols.includes(c))
+
+  function buildPreFilters(field: string, value: string): FilterChip[] {
+    if (!field.trim() || !value.trim()) return []
+    return [{ id: 'pre-filter', field: field.trim(), op: '=' as FilterOp, value: value.trim() }]
+  }
+
+  function getPkForIndex(meta: typeof leftMeta, indexName: string): string {
+    const idx = meta?.indexes?.find(i => i.name === indexName)
+    return idx?.partitionKey ?? meta?.partitionKey ?? 'pk'
+  }
+
+  function getSkForIndex(meta: typeof leftMeta, indexName: string): string | undefined {
+    const idx = meta?.indexes?.find(i => i.name === indexName)
+    return idx?.sortKey ?? meta?.sortKey
+  }
 
   async function handleRun() {
     setLoading(true)
-    await new Promise(r => setTimeout(r, 300))
+    setJoinError(null)
+    const start = Date.now()
 
-    const leftRows  = getMockTableRows(leftTable)
-    const rightRows = getMockTableRows(rightTable)
-    const rows = runJoin(leftRows, rightRows, leftField, rightField, joinType)
+    try {
+      let leftRowsRaw:  Record<string, unknown>[]
+      let rightRowsRaw: Record<string, unknown>[]
 
-    setResult({
-      rows,
-      leftScanned: leftRows.length,
-      rightScanned: rightRows.length,
-      matched:   rows.filter(r => r._joinSide === 'both').length,
-      leftOnly:  rows.filter(r => r._joinSide === 'left_only').length,
-      rightOnly: rows.filter(r => r._joinSide === 'right_only').length,
-      executionMs: 12,
-      warnings: joinType !== 'inner'
-        ? ['Client-side join — both tables fully scanned before merging']
-        : undefined,
-    })
+      if (!MOCK_MODE && connection.id) {
+        const [leftRes, rightRes] = await Promise.all([
+          api.queryTable({
+            connectionId:      connection.id,
+            table:             leftTable,
+            indexName:         leftIndex || undefined,
+            partitionKeyField: leftIndex ? getPkForIndex(leftMeta, leftIndex) : (leftMeta?.partitionKey ?? 'pk'),
+            sortKeyField:      leftIndex ? getSkForIndex(leftMeta, leftIndex) : leftMeta?.sortKey,
+            filters:           buildPreFilters(leftPreField, leftPreValue),
+            limit:             2000,
+            scanIndexForward:  false,
+          }),
+          api.queryTable({
+            connectionId:      connection.id,
+            table:             rightTable,
+            indexName:         rightIndex || undefined,
+            partitionKeyField: rightIndex ? getPkForIndex(rightMeta, rightIndex) : (rightMeta?.partitionKey ?? 'pk'),
+            sortKeyField:      rightIndex ? getSkForIndex(rightMeta, rightIndex) : rightMeta?.sortKey,
+            filters:           buildPreFilters(rightPreField, rightPreValue),
+            limit:             2000,
+            scanIndexForward:  false,
+          }),
+        ])
+        leftRowsRaw  = leftRes.rows  as Record<string, unknown>[]
+        rightRowsRaw = rightRes.rows as Record<string, unknown>[]
+      } else {
+        leftRowsRaw  = getMockTableRows(leftTable)  as Record<string, unknown>[]
+        rightRowsRaw = getMockTableRows(rightTable) as Record<string, unknown>[]
+        await new Promise(r => setTimeout(r, 300))
+      }
+
+      if (leftRowsRaw.length > 0)  setLeftCols(Object.keys(leftRowsRaw[0]))
+      if (rightRowsRaw.length > 0) setRightCols(Object.keys(rightRowsRaw[0]))
+
+      const rows = runJoin(
+        leftRowsRaw  as Parameters<typeof runJoin>[0],
+        rightRowsRaw as Parameters<typeof runJoin>[1],
+        leftField, rightField, joinType,
+      )
+
+      setResult({
+        rows,
+        leftScanned: leftRowsRaw.length,
+        rightScanned: rightRowsRaw.length,
+        matched:   rows.filter(r => r._joinSide === 'both').length,
+        leftOnly:  rows.filter(r => r._joinSide === 'left_only').length,
+        rightOnly: rows.filter(r => r._joinSide === 'right_only').length,
+        executionMs: Date.now() - start,
+        warnings: joinType !== 'inner'
+          ? ['Client-side join — both tables fully scanned before merging']
+          : undefined,
+      })
+    } catch (e) {
+      setJoinError(e instanceof Error ? e.message : String(e))
+    }
     setLoading(false)
   }
-
-  const leftCols     = Object.keys(getMockTableRows(leftTable)[0]  ?? {})
-  const rightCols    = Object.keys(getMockTableRows(rightTable)[0] ?? {})
-  const rightOnlyCols = rightCols.filter(c => !leftCols.includes(c))
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -732,12 +987,22 @@ function CrossJoinTab({ connection }: { connection: DbConnection }) {
         <div className="flex items-start gap-3">
           <div className="flex-1 space-y-2">
             <p className="text-[11px] font-semibold text-primary uppercase tracking-wider">Left table</p>
-            <select className="field-input w-full" value={leftTable} onChange={e => setLeftTable(e.target.value)}>
+            <select className="field-input w-full" value={leftTable} onChange={e => { setLeftTable(e.target.value); setLeftIndex('') }}>
               {tableNames.map(n => <option key={n} value={n}>{n}</option>)}
             </select>
+            {leftIndexes.length > 0 && (
+              <select className="field-input w-full text-[11px]" value={leftIndex} onChange={e => setLeftIndex(e.target.value)}>
+                <option value="">Table scan</option>
+                {leftIndexes.map(i => <option key={i.name} value={i.name}>{i.type}: {i.name}</option>)}
+              </select>
+            )}
+            <div className="flex gap-1">
+              <input className="field-input flex-1 text-[11px]" placeholder="pre-filter field" value={leftPreField} onChange={e => setLeftPreField(e.target.value)} />
+              <input className="field-input flex-1 text-[11px]" placeholder="= value" value={leftPreValue} onChange={e => setLeftPreValue(e.target.value)} />
+            </div>
             <div className="flex flex-col gap-1">
               <label className="text-[11px] text-text-muted">Join key</label>
-              <input className="field-input" value={leftField} onChange={e => setLeftField(e.target.value)} placeholder="deviceId" />
+              <input className="field-input" value={leftField} onChange={e => setLeftField(e.target.value)} placeholder="join key field" />
             </div>
           </div>
           <div className="flex flex-col items-center justify-center pt-8 gap-0.5 px-2">
@@ -746,12 +1011,22 @@ function CrossJoinTab({ connection }: { connection: DbConnection }) {
           </div>
           <div className="flex-1 space-y-2">
             <p className="text-[11px] font-semibold text-violet-400 uppercase tracking-wider">Right table</p>
-            <select className="field-input w-full" value={rightTable} onChange={e => setRightTable(e.target.value)}>
+            <select className="field-input w-full" value={rightTable} onChange={e => { setRightTable(e.target.value); setRightIndex('') }}>
               {tableNames.map(n => <option key={n} value={n}>{n}</option>)}
             </select>
+            {rightIndexes.length > 0 && (
+              <select className="field-input w-full text-[11px]" value={rightIndex} onChange={e => setRightIndex(e.target.value)}>
+                <option value="">Table scan</option>
+                {rightIndexes.map(i => <option key={i.name} value={i.name}>{i.type}: {i.name}</option>)}
+              </select>
+            )}
+            <div className="flex gap-1">
+              <input className="field-input flex-1 text-[11px]" placeholder="pre-filter field" value={rightPreField} onChange={e => setRightPreField(e.target.value)} />
+              <input className="field-input flex-1 text-[11px]" placeholder="= value" value={rightPreValue} onChange={e => setRightPreValue(e.target.value)} />
+            </div>
             <div className="flex flex-col gap-1">
               <label className="text-[11px] text-text-muted">Join key</label>
-              <input className="field-input" value={rightField} onChange={e => setRightField(e.target.value)} placeholder="deviceId" />
+              <input className="field-input" value={rightField} onChange={e => setRightField(e.target.value)} placeholder="join key field" />
             </div>
           </div>
         </div>
@@ -793,6 +1068,9 @@ function CrossJoinTab({ connection }: { connection: DbConnection }) {
           )}
         </div>
 
+        {joinError && (
+          <p className="text-[11px] text-danger font-mono bg-danger/5 border border-danger/20 rounded px-2 py-1">✕ {joinError}</p>
+        )}
         {result?.warnings && (
           <p className="text-[11px] text-warning">⚠ {result.warnings[0]}</p>
         )}
@@ -952,6 +1230,13 @@ function getPreviewFields(row: Record<string, unknown>, tsField: string): [strin
     .map(([k, v]) => [k, v === null || v === undefined ? '—' : String(v)])
 }
 
+// Maximum parallel DynamoDB calls in a single TimeTrace batch.
+// Beyond this, queries are batched to avoid overwhelming the connection pool.
+export const TRACE_PARALLEL_LIMIT = 8
+
+// Warning threshold — shown in UI when user selects more tables than this
+export const TRACE_TABLE_WARN_THRESHOLD = 15
+
 async function runTrace(
   connection: DbConnection,
   entityField: string,
@@ -965,50 +1250,50 @@ async function runTrace(
   let totalScanned = 0
   const t0 = performance.now()
 
-  for (const tableName of tables) {
+  async function queryOneTable(tableName: string): Promise<{ rows: Record<string, unknown>[]; scanned: number }> {
     const tableMeta = connection.tables?.find(t => t.name === tableName)
-    let rows: Record<string, unknown>[]
-
     if (MOCK_MODE) {
       const allRows = getMockTableRows(tableName) as Record<string, unknown>[]
-      totalScanned += allRows.length
-      rows = allRows.filter(row => {
+      const rows = allRows.filter(row => {
         if (!matchesCondition(row, entityField, entityOp, entityValue)) return false
         return extraConditions.every(c => matchesCondition(row, c.field, '=', c.value))
       })
-    } else {
-      // Build filter chips for the real query
-      const chips: FilterChip[] = [
-        { id: 'trace-pk', field: entityField, op: entityOp as FilterOp, value: entityValue },
-        ...extraConditions.map((c, i) => ({
-          id: `trace-extra-${i}`,
-          field: c.field,
-          op: '=' as FilterOp,
-          value: c.value,
-        })),
-      ]
-      try {
-        const res = await api.queryTable({
-          connectionId:      connection.id,
-          table:             tableName,
-          partitionKeyField: tableMeta?.partitionKey ?? entityField,
-          sortKeyField:      tableMeta?.sortKey,
-          filters:           chips,
-          limit:             500,
-        })
-        rows = res.rows as Record<string, unknown>[]
-        totalScanned += res.scannedCount
-      } catch {
-        rows = []
-      }
+      return { rows, scanned: allRows.length }
     }
+    const chips: FilterChip[] = [
+      { id: 'trace-pk', field: entityField, op: entityOp as FilterOp, value: entityValue },
+      ...extraConditions.map((c, i) => ({
+        id: `trace-extra-${i}`, field: c.field, op: '=' as FilterOp, value: c.value,
+      })),
+    ]
+    try {
+      const res = await api.queryTable({
+        connectionId:      connection.id,
+        table:             tableName,
+        partitionKeyField: tableMeta?.partitionKey ?? entityField,
+        sortKeyField:      tableMeta?.sortKey,
+        filters:           chips,
+        limit:             500,
+      })
+      return { rows: res.rows as Record<string, unknown>[], scanned: res.scannedCount }
+    } catch {
+      return { rows: [], scanned: 0 }
+    }
+  }
 
-    if (rows.length === 0) {
-      missingTables.push(tableName)
-    } else {
-      for (const row of rows) {
-        const { ts, field } = detectTimestamp(row)
-        matches.push({ table: tableName, row: row as TraceMatch['row'], timestamp: ts, timestampField: field })
+  // Batch parallel execution — TRACE_PARALLEL_LIMIT at a time
+  for (let i = 0; i < tables.length; i += TRACE_PARALLEL_LIMIT) {
+    const batch = tables.slice(i, i + TRACE_PARALLEL_LIMIT)
+    const batchResults = await Promise.all(batch.map(t => queryOneTable(t).then(r => ({ table: t, ...r }))))
+    for (const { table: tableName, rows, scanned } of batchResults) {
+      totalScanned += scanned
+      if (rows.length === 0) {
+        missingTables.push(tableName)
+      } else {
+        for (const row of rows) {
+          const { ts, field } = detectTimestamp(row)
+          matches.push({ table: tableName, row: row as TraceMatch['row'], timestamp: ts, timestampField: field })
+        }
       }
     }
   }
@@ -1200,7 +1485,7 @@ const TRACE_OPS: { value: TraceOp; label: string; hint: string }[] = [
 let traceCondId = 0
 
 function TraceTab({ activeConnection }: { activeConnection: DbConnection | null }) {
-  const [entityField, setEntityField] = useState('deviceId')
+  const [entityField, setEntityField] = useState('')
   const [entityOp, setEntityOp]       = useState<TraceOp>('=')
   const [entityValue, setEntityValue] = useState('')
   const [extraConds, setExtraConds]   = useState<TraceCondition[]>([])
@@ -1227,11 +1512,6 @@ function TraceTab({ activeConnection }: { activeConnection: DbConnection | null 
 
   const tablesToSearch = selectedTables.length > 0 ? selectedTables : allTables
 
-  function toggleTable(name: string) {
-    setSelectedTables(prev =>
-      prev.includes(name) ? prev.filter(t => t !== name) : [...prev, name]
-    )
-  }
 
   function addExtraCond() {
     setExtraConds(c => [...c, { id: `tc-${++traceCondId}`, field: '', op: '=', value: '' }])
@@ -1276,6 +1556,8 @@ function TraceTab({ activeConnection }: { activeConnection: DbConnection | null 
 
   const selectedOpHint = TRACE_OPS.find(o => o.value === entityOp)?.hint ?? ''
   const canTrace = entityValue.trim().length > 0
+  const activeTableCount = tablesToSearch.length
+  const tooManyTables = activeTableCount > TRACE_TABLE_WARN_THRESHOLD
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -1291,7 +1573,7 @@ function TraceTab({ activeConnection }: { activeConnection: DbConnection | null 
               className="field-input w-32"
               value={entityField}
               onChange={e => setEntityField(e.target.value)}
-              placeholder="deviceId"
+              placeholder="field name"
               list="trace-field-list"
             />
             <datalist id="trace-field-list">
@@ -1317,7 +1599,7 @@ function TraceTab({ activeConnection }: { activeConnection: DbConnection | null 
               value={entityValue}
               onChange={e => setEntityValue(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && canTrace && handleTrace()}
-              placeholder="sensor-0012"
+              placeholder="field value"
             />
           </div>
           <Button variant="primary" size="sm" onClick={handleTrace} disabled={loading || !canTrace}>
@@ -1328,6 +1610,18 @@ function TraceTab({ activeConnection }: { activeConnection: DbConnection | null 
         {/* Operator hint */}
         {selectedOpHint && (
           <p className="text-[11px] text-text-muted italic">{selectedOpHint}</p>
+        )}
+
+        {/* Many-tables performance warning */}
+        {tooManyTables && (
+          <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-warning/8 border border-warning/25 text-[11px] text-warning">
+            <span className="flex-shrink-0">⚠</span>
+            <span>
+              {activeTableCount} tables selected — queries will be batched {TRACE_PARALLEL_LIMIT} at a time.
+              Expect ~{Math.ceil(activeTableCount / TRACE_PARALLEL_LIMIT)} round-trips.
+              Consider narrowing to the tables most likely to contain the entity.
+            </span>
+          </div>
         )}
 
         {/* AND conditions */}
@@ -1369,31 +1663,59 @@ function TraceTab({ activeConnection }: { activeConnection: DbConnection | null 
             </button>
           )}
 
-          {allTables.length > 1 && (
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-[11px] text-text-muted">Tables:</span>
-              {allTables.map((name, i) => {
-                const color   = getTraceColor(tableColorIndex.get(name) ?? i)
-                const checked = selectedTables.length === 0 || selectedTables.includes(name)
+          {allTables.length > 0 && (
+            <div className="flex items-start gap-2 flex-wrap">
+              <span className="text-[11px] text-text-muted mt-0.5">Tables:</span>
+              {/* Selected table chips with × */}
+              {(selectedTables.length > 0 ? selectedTables : allTables).map((name, i) => {
+                const color = getTraceColor(tableColorIndex.get(name) ?? i)
                 return (
-                  <button
+                  <span
                     key={name}
-                    onClick={() => toggleTable(name)}
-                    className={`text-[10px] px-2 py-0.5 rounded-full border transition-colors font-medium ${
-                      checked
-                        ? `${color.border} ${color.bg} ${color.label}`
-                        : 'border-border text-text-muted opacity-40'
-                    }`}
+                    className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full border font-medium ${color.border} ${color.bg} ${color.label}`}
                   >
                     {name}
-                  </button>
+                    <button
+                      onClick={() => {
+                        if (selectedTables.length === 0) {
+                          // "all" mode → switch to explicit with this one removed
+                          setSelectedTables(allTables.filter(t => t !== name))
+                        } else {
+                          setSelectedTables(prev => prev.filter(t => t !== name))
+                        }
+                      }}
+                      className="opacity-60 hover:opacity-100 ml-0.5"
+                      title="Remove table"
+                    >×</button>
+                  </span>
                 )
               })}
+              {/* + Add table dropdown */}
+              {(() => {
+                const active = selectedTables.length > 0 ? selectedTables : allTables
+                const available = allTables.filter(t => !active.includes(t))
+                if (available.length === 0) return null
+                return (
+                  <select
+                    value=""
+                    onChange={e => {
+                      if (!e.target.value) return
+                      if (selectedTables.length === 0) {
+                        // all mode — switch to explicit with new added
+                        setSelectedTables([...allTables, e.target.value])
+                      } else {
+                        setSelectedTables(prev => [...prev, e.target.value])
+                      }
+                    }}
+                    className="text-[10px] px-1.5 py-0.5 rounded-full border border-dashed border-border text-text-muted bg-transparent hover:border-primary/50 hover:text-primary transition-colors cursor-pointer outline-none"
+                  >
+                    <option value="">+ Add table</option>
+                    {available.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                )
+              })()}
               {selectedTables.length > 0 && (
-                <button
-                  onClick={() => setSelectedTables([])}
-                  className="text-[10px] text-text-muted hover:text-primary transition-colors"
-                >
+                <button onClick={() => setSelectedTables([])} className="text-[10px] text-text-muted hover:text-primary">
                   All
                 </button>
               )}
@@ -1415,11 +1737,11 @@ function TraceTab({ activeConnection }: { activeConnection: DbConnection | null 
             <div className="text-center text-text-muted max-w-xs">
               <div className="text-3xl mb-3 opacity-40">⏱</div>
               <p className="text-sm font-medium text-text-secondary mb-1">Cross-table event timeline</p>
-              <p className="text-xs">Enter an entity key above — DataOrbit will search all tables and build a chronological timeline showing where and when the entity appears.</p>
-              <div className="mt-4 text-[11px] space-y-1 text-left bg-bg-surface rounded-lg p-3 border border-border-subtle">
-                <p className="text-text-muted font-semibold mb-1.5">Try these:</p>
-                <p><code className="text-primary">deviceId = sensor-0012</code> — trace a WARN event with missing alert</p>
-                <p><code className="text-primary">deviceId = sensor-4421</code> — trace a healthy sensor lifecycle</p>
+              <p className="text-xs leading-relaxed">Enter an entity field and value above. DataOrbit searches the selected tables and builds a chronological timeline showing where the entity appears — and highlights tables where it's missing.</p>
+              <div className="mt-3 text-[11px] text-left bg-bg-surface rounded-lg p-3 border border-border-subtle text-text-muted">
+                Use <code className="text-primary">field = value</code> to trace an exact entity,
+                or <code className="text-primary">begins_with</code> for prefix-keyed tables.
+                Add tables with <span className="text-primary">+ Add table</span> below.
               </div>
             </div>
           </div>
@@ -1444,7 +1766,7 @@ function TraceTab({ activeConnection }: { activeConnection: DbConnection | null 
 
 // ── Explore root ──────────────────────────────────────────────────────────────
 
-export function Explore({ activeConnection, activeTable }: ExploreProps) {
+export function Explore({ activeConnection, activeTable, onUpdateSchema }: ExploreProps) {
   const [tab, setTab] = useState<'query' | 'join' | 'trace'>('query')
 
   if (!activeConnection && tab === 'query' && !activeTable) {
@@ -1477,7 +1799,7 @@ export function Explore({ activeConnection, activeTable }: ExploreProps) {
       </div>
 
       <div className="flex-1 overflow-hidden">
-        {tab === 'query' && <QueryTab activeConnection={activeConnection} activeTable={activeTable} />}
+        {tab === 'query' && <QueryTab activeConnection={activeConnection} activeTable={activeTable} onUpdateSchema={onUpdateSchema} />}
         {tab === 'join' && activeConnection && <CrossJoinTab connection={activeConnection} />}
         {tab === 'join' && !activeConnection && (
           <div className="h-full flex items-center justify-center">

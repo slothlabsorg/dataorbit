@@ -10,3 +10,20 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+  # LocalStack Community — DynamoDB with provisioned capacity, throttling simulation
+  # Endpoint: http://localhost:8001
+  localstack:
+    image: localstack/localstack:latest
+    container_name: dataorbit-localstack
+    ports:
+      - "8001:4566"
+    environment:
+      - SERVICES=dynamodb
+      - DEBUG=0
+      - PERSISTENCE=0
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4566/_localstack/health | grep '\"dynamodb\"' || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
