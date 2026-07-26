@@ -8,6 +8,7 @@ import Button from '@/components/ui/Button'
 import { mockRows, mockRegistryRows, mockAlertRows, mockLocationRows } from '@/mock/data'
 import { api } from '@/lib/tauri'
 import { downloadJson, downloadCsv } from '@/lib/export'
+import { generateCli, generateTypeScript, generatePython, generatePartiQL } from '@/lib/codegen'
 
 const MOCK_MODE = (() => {
   try { return new URL(window.location.href).searchParams.get('mock') === '1' } catch { return false }
@@ -426,6 +427,40 @@ function QueryTab({ activeConnection, activeTable, onUpdateSchema }: ExploreProp
   const [pendingConfirmScan, setPendingConfirmScan] = useState(false)
   const [suggestion, setSuggestion] = useState<IndexSuggestion | null>(null)
   const [queryError, setQueryError] = useState<string | null>(null)
+  const [copyLang, setCopyLang] = useState<'cli' | 'ts' | 'py' | 'partiql' | null>(null)
+  const [codeCopied, setCodeCopied] = useState(false)
+
+  // Close copy dropdown on outside click
+  useEffect(() => {
+    if (copyLang === null) return
+    const close = () => setCopyLang(null)
+    window.addEventListener('mousedown', close)
+    return () => window.removeEventListener('mousedown', close)
+  }, [copyLang])
+
+  async function handleCopyCode(lang: 'cli' | 'ts' | 'py' | 'partiql') {
+    const isScan = opMode === 'Scan' || opMode === 'IndexScan'
+    const def: QueryDef = {
+      connectionId:      activeConnection!.id,
+      table:             activeTable!,
+      indexName:         activeIndex ?? undefined,
+      partitionKeyField: pkField,
+      sortKeyField:      skField,
+      filters:           chips,
+      limit,
+      scanIndexForward:  ascending,
+    }
+    const region  = activeConnection?.awsRegion
+    const profile = activeConnection?.awsProfile
+    let code = ''
+    if (lang === 'cli')     code = generateCli(def, profile, region, isScan)
+    if (lang === 'ts')      code = generateTypeScript(def, region, isScan)
+    if (lang === 'py')      code = generatePython(def, region, isScan)
+    if (lang === 'partiql') code = generatePartiQL(def, isScan)
+    await navigator.clipboard.writeText(code).catch(() => {})
+    setCodeCopied(true)
+    setTimeout(() => setCodeCopied(false), 1500)
+  }
   const [activeIndex, setActiveIndex] = useState<string | null>(null)
 
   if (!activeConnection) {
@@ -708,6 +743,26 @@ function QueryTab({ activeConnection, activeTable, onUpdateSchema }: ExploreProp
                   </button>
                 </div>
               )}
+              {/* Copy as Code dropdown */}
+              <div className="relative" onMouseDown={e => e.stopPropagation()}>
+                <button
+                  onClick={() => setCopyLang(l => l ? null : 'cli')}
+                  className="px-1.5 py-0.5 rounded border border-border text-[10px] text-text-muted hover:border-primary/40 hover:text-primary transition-colors flex items-center gap-1"
+                >
+                  {codeCopied ? '✓ Copied' : '</> Copy as code'}
+                  <svg className="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9"/></svg>
+                </button>
+                {copyLang !== null && (
+                  <div className="absolute right-0 top-full mt-1 bg-bg-elevated border border-border rounded-lg shadow-xl z-20 min-w-[140px] py-1">
+                    {([['cli', 'AWS CLI'], ['ts', 'TypeScript SDK'], ['py', 'Python boto3'], ['partiql', 'PartiQL']] as const).map(([lang, label]) => (
+                      <button key={lang} onClick={() => { handleCopyCode(lang); setCopyLang(null) }}
+                        className="w-full text-left px-3 py-1.5 text-xs text-text-secondary hover:bg-bg-surface hover:text-text-primary transition-colors">
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
               <div className="flex items-center gap-1 bg-bg-surface rounded-lg p-0.5">
                 {(['table', 'json'] as const).map(m => (
                   <button key={m} onClick={() => setViewMode(m)}
