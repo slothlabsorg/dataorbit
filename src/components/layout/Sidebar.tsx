@@ -187,6 +187,7 @@ function ConnectionItem({
                 {filteredTables.map(t => (
                   <button
                     key={t.name}
+                    title={t.name}
                     onClick={() => onSelectTable(t.name)}
                     className={`flex items-center gap-1.5 w-full px-2 py-1 rounded transition-colors text-left ${
                       activeTable === t.name && isActive

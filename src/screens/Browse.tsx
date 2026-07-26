@@ -17,6 +17,7 @@ interface BrowseProps {
   onRefreshTables?: (connId: string, tables: TableMeta[]) => void
   onUpdateTableSchema?: (connId: string, schema: TableMeta) => void
   showToast?: (msg: string, type: ToastType) => void
+  onOpenExplore?: () => void
 }
 
 type ViewMode = 'table' | 'json'
@@ -124,7 +125,7 @@ function JsonEditor({
 
 // ── Schema panel ──────────────────────────────────────────────────────────────
 
-function SchemaPanel({ table, onClose }: { table: TableMeta; onClose: () => void }) {
+function SchemaPanel({ table, onClose, onIndexClick }: { table: TableMeta; onClose: () => void; onIndexClick?: (indexName: string) => void }) {
   return (
     <motion.div
       initial={{ height: 0, opacity: 0 }}
@@ -147,10 +148,15 @@ function SchemaPanel({ table, onClose }: { table: TableMeta; onClose: () => void
             <p className="text-text-muted mb-1">Indexes</p>
             <div className="flex flex-wrap gap-1.5">
               {table.indexes!.map(idx => (
-                <span key={idx.name} className="px-1.5 py-0.5 rounded bg-bg-surface border border-border-subtle text-text-secondary">
+                <button
+                  key={idx.name}
+                  onClick={() => onIndexClick?.(idx.name)}
+                  className="px-1.5 py-0.5 rounded bg-bg-surface border border-border-subtle text-text-secondary hover:border-primary/40 hover:bg-primary/5 transition-colors cursor-pointer"
+                  title="Explore with this index"
+                >
                   <span className="text-primary">{idx.type}</span> {idx.name}
                   <span className="text-text-muted"> · pk:{idx.partitionKey}{idx.sortKey ? ` sk:${idx.sortKey}` : ''}</span>
-                </span>
+                </button>
               ))}
             </div>
           </div>
@@ -221,13 +227,13 @@ function TableSelector({ conn, activeTable, onSelect, onRefresh, refreshing, sch
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
-export function Browse({ activeConnection, activeTable, onSelectTable, onRefreshTables, onUpdateTableSchema, showToast }: BrowseProps) {
+export function Browse({ activeConnection, activeTable, onSelectTable, onRefreshTables, onUpdateTableSchema, showToast, onOpenExplore }: BrowseProps) {
   const [result, setResult]         = useState<QueryResult | null>(null)
   const [loading, setLoading]       = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [viewMode, setViewMode]     = useState<ViewMode>('table')
-  const [schemaOpen, setSchemaOpen] = useState(false)
+  const [schemaOpen, setSchemaOpen] = useState(true)
   const [sortDir, setSortDir]       = useState<SortDir>('desc')
   const [selectedRow, setSelectedRow] = useState<number | null>(null)
   const [editingRow, setEditingRow] = useState<Record<string, unknown> | null>(null)
@@ -359,7 +365,7 @@ export function Browse({ activeConnection, activeTable, onSelectTable, onRefresh
 
       <AnimatePresence>
         {schemaOpen && table && (
-          <SchemaPanel table={table} onClose={() => setSchemaOpen(false)} />
+          <SchemaPanel table={table} onClose={() => setSchemaOpen(false)} onIndexClick={() => onOpenExplore?.()} />
         )}
       </AnimatePresence>
 

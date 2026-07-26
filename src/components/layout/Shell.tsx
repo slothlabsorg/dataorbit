@@ -61,7 +61,7 @@ export function Shell({
           newsUnread={newsUnread}
         />
 
-        <div className="flex-1 overflow-hidden">
+        <div className="flex-1 min-w-0 overflow-hidden">
           {children}
         </div>
       </div>
