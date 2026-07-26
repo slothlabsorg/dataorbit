@@ -48,6 +48,12 @@ function highlightJson(raw: string): string {
   )
 }
 
+function sanitizeDisplay(val: unknown): string {
+  const str = val === null || val === undefined ? '' : typeof val === 'object' ? JSON.stringify(val) : String(val)
+  // Replace control characters with middot
+  return str.replace(/[\x00-\x1F\x7F]/g, '\u00b7')
+}
+
 function jsonLintError(s: string): string | null {
   try { JSON.parse(s); return null } catch (e) { return e instanceof Error ? e.message : String(e) }
 }
@@ -479,7 +485,7 @@ export function Browse({ activeConnection, activeTable, onSelectTable, onRefresh
                         }`}
                       >
                         {Object.entries(row as Record<string, unknown>).map(([col, val]) => {
-                          const str = val === null || val === undefined ? '' : typeof val === 'object' ? JSON.stringify(val) : String(val)
+                          const str = sanitizeDisplay(val)
                           return (
                             <td key={col} className="px-3 py-1.5 text-text-secondary whitespace-nowrap max-w-[220px] overflow-hidden text-ellipsis border-r border-border-subtle last:border-r-0" title={str}>
                               {str}

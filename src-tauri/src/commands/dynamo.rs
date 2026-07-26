@@ -741,4 +741,33 @@ mod tests {
         let ands = filter.expression.matches("AND").count();
         assert_eq!(ands, 1, "Two filter chips → one AND, got: {}", filter.expression);
     }
+
+    #[test]
+    fn test_infer_attr_value_string() {
+        let v = infer_attr_value("hello");
+        assert!(matches!(v, AttributeValue::S(_)));
+    }
+
+    #[test]
+    fn test_infer_attr_value_number() {
+        let v = infer_attr_value("42");
+        assert!(matches!(v, AttributeValue::N(_)));
+        let v2 = infer_attr_value("3.14");
+        assert!(matches!(v2, AttributeValue::N(_)));
+    }
+
+    #[test]
+    fn test_infer_attr_value_bool() {
+        let t = infer_attr_value("true");
+        let f = infer_attr_value("false");
+        assert!(matches!(t, AttributeValue::Bool(true)));
+        assert!(matches!(f, AttributeValue::Bool(false)));
+    }
+
+    #[test]
+    fn test_infer_attr_value_composite_key() {
+        // Composite keys like "USER#123" should be String, not Number
+        let v = infer_attr_value("USER#123");
+        assert!(matches!(v, AttributeValue::S(_)));
+    }
 }
