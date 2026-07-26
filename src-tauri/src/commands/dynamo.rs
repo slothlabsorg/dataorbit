@@ -227,7 +227,18 @@ pub async fn list_tables(connection_id: String) -> Result<Vec<TableMetaOut>, Str
         if let Some(ref lek) = last {
             req = req.exclusive_start_table_name(lek);
         }
-        let resp = req.send().await.map_err(|e| e.to_string())?;
+        let resp = req.send().await.map_err(|e| {
+            let raw = e.to_string();
+            let profile = conn.aws_profile.as_deref().unwrap_or("default");
+            let region = conn.aws_region.as_deref().unwrap_or("us-east-1");
+            if raw.contains("security token") || raw.contains("credentials") || raw.contains("ExpiredToken") || raw.contains("InvalidClientTokenId") {
+                format!("AWS credentials expired or missing for profile '{}'. Start a new session in CloudOrbit first. (region: {})", profile, region)
+            } else if raw.contains("UnknownCA") || raw.contains("certificate") {
+                format!("TLS certificate error — your network proxy may be intercepting requests. ({})", raw)
+            } else {
+                format!("AWS error in {} (profile '{}'): {}", region, profile, raw)
+            }
+        })?;
         names.extend(resp.table_names().iter().cloned());
         let done = resp.last_evaluated_table_name().is_none();
         last = resp.last_evaluated_table_name().map(|s| s.to_string());

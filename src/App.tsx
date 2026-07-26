@@ -140,7 +140,15 @@ export default function App() {
 
     const fullConn: DbConnection = { ...saved, status, tables }
     setConnections(prev => [...prev, fullConn])
-    if (errMsg) setConnErrors(prev => ({ ...prev, [saved.id]: errMsg }))
+    if (errMsg) {
+      setConnErrors(prev => ({ ...prev, [saved.id]: errMsg }))
+    } else if (tables.length === 0) {
+      const region = saved.awsRegion ?? 'us-east-1'
+      setConnErrors(prev => ({
+        ...prev,
+        [saved.id]: `No tables found in ${region}. Verify the region is correct or that your AWS session is active (run CloudOrbit login if needed).`,
+      }))
+    }
     setActiveConnId(saved.id)
     setScreen('browse')
   }
@@ -156,6 +164,14 @@ export default function App() {
     try {
       const tables = await api.listTables(id)
       setConnections(prev => prev.map(c => c.id === id ? { ...c, status: 'connected', tables } : c))
+      if (tables.length === 0) {
+        const conn = connections.find(c => c.id === id)
+        const region = conn?.awsRegion ?? 'us-east-1'
+        setConnErrors(prev => ({
+          ...prev,
+          [id]: `No tables found in ${region}. Verify the region is correct or that your AWS session is active (run CloudOrbit login if needed).`,
+        }))
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       setConnections(prev => prev.map(c => c.id === id ? { ...c, status: 'error' } : c))

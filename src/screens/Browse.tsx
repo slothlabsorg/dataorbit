@@ -188,7 +188,9 @@ function TableSelector({ conn, activeTable, onSelect, onRefresh, refreshing, sch
         </button>
       ))}
       {(conn.tables?.length ?? 0) === 0 && (
-        <span className="text-text-muted text-xs italic">No tables</span>
+        <span className="text-text-muted text-xs italic" title={`Region: ${conn.awsRegion ?? 'us-east-1'}`}>
+          No tables — check region ({conn.awsRegion ?? 'us-east-1'})
+        </span>
       )}
       <div className="ml-auto flex items-center gap-1 flex-shrink-0">
         {activeTable && (
