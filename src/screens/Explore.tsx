@@ -426,6 +426,7 @@ function QueryTab({ activeConnection, activeTable, onUpdateSchema }: ExploreProp
   const [pendingConfirmScan, setPendingConfirmScan] = useState(false)
   const [suggestion, setSuggestion] = useState<IndexSuggestion | null>(null)
   const [queryError, setQueryError] = useState<string | null>(null)
+  const [activeIndex, setActiveIndex] = useState<string | null>(null)
 
   if (!activeConnection) {
     return (
@@ -463,10 +464,11 @@ function QueryTab({ activeConnection, activeTable, onUpdateSchema }: ExploreProp
       .catch(() => {})
   }, [activeConnection?.id, activeTable])
 
-  const pkField  = table?.partitionKey ?? 'pk'
-  const skField  = table?.sortKey
+  const activeIndexMeta = activeIndex ? table?.indexes?.find(i => i.name === activeIndex) : null
+  const pkField  = activeIndexMeta?.partitionKey ?? table?.partitionKey ?? 'pk'
+  const skField  = activeIndexMeta?.sortKey ?? table?.sortKey
   const isPkFilter = chips.some(c => c.field === pkField && c.op === '=')
-  const opMode   = detectOpMode(chips, pkField)
+  const opMode   = detectOpMode(chips, pkField, !!activeIndex)
   const rcu      = estimateRcu(opMode, table?.itemCount ?? 1000)
 
   // Detect timestamp field — sk first, then pk
@@ -500,6 +502,7 @@ function QueryTab({ activeConnection, activeTable, onUpdateSchema }: ExploreProp
         const def: QueryDef = {
           connectionId:      activeConnection.id,
           table:             activeTable!,
+          indexName:         activeIndex ?? undefined,
           partitionKeyField: pkField,
           sortKeyField:      skField,
           filters:           chips,
@@ -576,10 +579,10 @@ function QueryTab({ activeConnection, activeTable, onUpdateSchema }: ExploreProp
 
   // Pre-run cost hint (computed from current chips, no fetch needed)
   const preRunHint = useMemo(() => {
-    const mode = detectOpMode(chips, pkField)
+    const mode = detectOpMode(chips, pkField, !!activeIndex)
     const est  = estimateRcu(mode, table?.itemCount ?? 1000)
     return { mode, est }
-  }, [chips, pkField, table?.itemCount])
+  }, [chips, pkField, activeIndex, table?.itemCount])
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -623,6 +626,31 @@ function QueryTab({ activeConnection, activeTable, onUpdateSchema }: ExploreProp
               {preRunHint.mode} · {preRunHint.est.label}
             </span>
           </div>
+        </div>
+
+        {/* Index tabs */}
+        <div className="flex items-center gap-1 overflow-x-auto pb-1">
+          <button
+            onClick={() => setActiveIndex(null)}
+            className={`flex-shrink-0 px-2.5 py-1 rounded-md text-xs font-mono transition-colors ${
+              !activeIndex ? 'bg-primary/15 text-primary border border-primary/30' : 'text-text-secondary hover:text-text-primary hover:bg-bg-surface'
+            }`}
+          >
+            Table
+          </button>
+          {(table?.indexes ?? []).map(idx => (
+            <button
+              key={idx.name}
+              onClick={() => setActiveIndex(idx.name)}
+              className={`flex-shrink-0 px-2.5 py-1 rounded-md text-xs font-mono transition-colors ${
+                activeIndex === idx.name ? 'bg-primary/15 text-primary border border-primary/30' : 'text-text-secondary hover:text-text-primary hover:bg-bg-surface'
+              }`}
+              title={`${idx.type}: pk=${idx.partitionKey}${idx.sortKey ? ` sk=${idx.sortKey}` : ''}`}
+            >
+              <span className="text-[10px] mr-1" style={{color: idx.type === 'GSI' ? '#f59e0b' : '#818cf8'}}>{idx.type}</span>
+              {idx.name}
+            </button>
+          ))}
         </div>
 
         {/* Active chips */}
@@ -890,6 +918,38 @@ function CrossJoinTab({ connection }: { connection: DbConnection }) {
   const leftIndexes  = leftMeta?.indexes  ?? []
   const rightIndexes = rightMeta?.indexes ?? []
 
+  // FIX 2: Autocomplete attributes for left and right tables
+  const leftAttrs = [
+    ...(leftMeta?.attributes ?? []),
+    leftMeta?.partitionKey,
+    leftMeta?.sortKey,
+    ...(leftMeta?.indexes?.flatMap(i => [i.partitionKey, i.sortKey]) ?? []),
+  ].filter(Boolean) as string[]
+
+  const rightAttrs = [
+    ...(rightMeta?.attributes ?? []),
+    rightMeta?.partitionKey,
+    rightMeta?.sortKey,
+    ...(rightMeta?.indexes?.flatMap(i => [i.partitionKey, i.sortKey]) ?? []),
+  ].filter(Boolean) as string[]
+
+  // FIX 3: Load schema when tables are selected
+  useEffect(() => {
+    if (!connection?.id || !leftTable) return
+    const meta = connection.tables?.find(t => t.name === leftTable)
+    if (!meta?.partitionKey) {
+      api.getTableSchema(connection.id, leftTable).catch(() => {})
+    }
+  }, [connection?.id, leftTable])
+
+  useEffect(() => {
+    if (!connection?.id || !rightTable) return
+    const meta = connection.tables?.find(t => t.name === rightTable)
+    if (!meta?.partitionKey) {
+      api.getTableSchema(connection.id, rightTable).catch(() => {})
+    }
+  }, [connection?.id, rightTable])
+
   const sameTable = leftTable === rightTable
 
   const [joinError, setJoinError] = useState<string | null>(null)
@@ -981,6 +1041,12 @@ function CrossJoinTab({ connection }: { connection: DbConnection }) {
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
+      <datalist id="left-fields">
+        {leftAttrs.map(a => <option key={a} value={a} />)}
+      </datalist>
+      <datalist id="right-fields">
+        {rightAttrs.map(a => <option key={a} value={a} />)}
+      </datalist>
       <div className="px-4 py-4 border-b border-border-subtle bg-bg-elevated space-y-4 flex-shrink-0">
 
         {/* Table + key selectors */}
@@ -997,12 +1063,12 @@ function CrossJoinTab({ connection }: { connection: DbConnection }) {
               </select>
             )}
             <div className="flex gap-1">
-              <input className="field-input flex-1 text-[11px]" placeholder="pre-filter field" value={leftPreField} onChange={e => setLeftPreField(e.target.value)} />
+              <input className="field-input flex-1 text-[11px]" placeholder="pre-filter field" value={leftPreField} onChange={e => setLeftPreField(e.target.value)} list="left-fields" />
               <input className="field-input flex-1 text-[11px]" placeholder="= value" value={leftPreValue} onChange={e => setLeftPreValue(e.target.value)} />
             </div>
             <div className="flex flex-col gap-1">
               <label className="text-[11px] text-text-muted">Join key</label>
-              <input className="field-input" value={leftField} onChange={e => setLeftField(e.target.value)} placeholder="join key field" />
+              <input className="field-input" value={leftField} onChange={e => setLeftField(e.target.value)} placeholder="join key field" list="left-fields" />
             </div>
           </div>
           <div className="flex flex-col items-center justify-center pt-8 gap-0.5 px-2">
@@ -1021,12 +1087,12 @@ function CrossJoinTab({ connection }: { connection: DbConnection }) {
               </select>
             )}
             <div className="flex gap-1">
-              <input className="field-input flex-1 text-[11px]" placeholder="pre-filter field" value={rightPreField} onChange={e => setRightPreField(e.target.value)} />
+              <input className="field-input flex-1 text-[11px]" placeholder="pre-filter field" value={rightPreField} onChange={e => setRightPreField(e.target.value)} list="right-fields" />
               <input className="field-input flex-1 text-[11px]" placeholder="= value" value={rightPreValue} onChange={e => setRightPreValue(e.target.value)} />
             </div>
             <div className="flex flex-col gap-1">
               <label className="text-[11px] text-text-muted">Join key</label>
-              <input className="field-input" value={rightField} onChange={e => setRightField(e.target.value)} placeholder="join key field" />
+              <input className="field-input" value={rightField} onChange={e => setRightField(e.target.value)} placeholder="join key field" list="right-fields" />
             </div>
           </div>
         </div>
@@ -1737,7 +1803,12 @@ function TraceTab({ activeConnection }: { activeConnection: DbConnection | null 
             <div className="text-center text-text-muted max-w-xs">
               <div className="text-3xl mb-3 opacity-40">⏱</div>
               <p className="text-sm font-medium text-text-secondary mb-1">Cross-table event timeline</p>
-              <p className="text-xs leading-relaxed">Enter an entity field and value above. DataOrbit searches the selected tables and builds a chronological timeline showing where the entity appears — and highlights tables where it's missing.</p>
+              <p className="text-xs leading-relaxed">
+                Sigue una entidad a través de todas tus tablas. Ingresa el campo y valor
+                que identifica la entidad (ej: conferenceId = TEST~xxx) y ve todo lo que
+                pasó, ordenado por tiempo. Ideal para rastrear conferencias, usuarios,
+                pedidos u otros registros a lo largo de tu pipeline.
+              </p>
               <div className="mt-3 text-[11px] text-left bg-bg-surface rounded-lg p-3 border border-border-subtle text-text-muted">
                 Use <code className="text-primary">field = value</code> to trace an exact entity,
                 or <code className="text-primary">begins_with</code> for prefix-keyed tables.
@@ -1784,7 +1855,7 @@ export function Explore({ activeConnection, activeTable, onUpdateSchema }: Explo
         {([
           { id: 'query', label: 'Query',       badge: null    },
           { id: 'join',  label: 'Cross-join',  badge: null    },
-          { id: 'trace', label: 'Time Trace',  badge: 'new'   },
+          { id: 'trace', label: 'Entity History',  badge: 'new'   },
         ] as const).map(t => (
           <button key={t.id} onClick={() => setTab(t.id)}
             className={`px-3 py-2 text-xs font-medium border-b-2 transition-colors -mb-px ${

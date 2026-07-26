@@ -80,6 +80,16 @@ pub enum OpMode {
     IndexQuery,
 }
 
+/// Infer AttributeValue type from string: booleans, numbers, or fallback to string.
+fn infer_attr_value(value: &str) -> AttributeValue {
+    if value == "true"  { return AttributeValue::Bool(true)  }
+    if value == "false" { return AttributeValue::Bool(false) }
+    if value.parse::<f64>().is_ok() {
+        return AttributeValue::N(value.to_string())
+    }
+    AttributeValue::S(value.to_string())
+}
+
 /// Build KeyConditionExpression from pk/sk chips and FilterExpression from the rest.
 pub fn build_expressions(
     chips:    &[FilterChipData],
@@ -110,7 +120,7 @@ pub fn build_expressions(
 
         let clause = match chip.op.as_str() {
             "="  | "!=" | "<" | "<=" | ">" | ">=" => {
-                parts.attr_values.insert(value_placeholder.clone(), AttributeValue::S(chip.value.clone()));
+                parts.attr_values.insert(value_placeholder.clone(), infer_attr_value(&chip.value));
                 let op_str = match chip.op.as_str() {
                     "="  => "=",  "!=" => "<>",
                     "<"  => "<",  "<=" => "<=",
@@ -120,11 +130,11 @@ pub fn build_expressions(
                 format!("{name_placeholder} {op_str} {value_placeholder}")
             }
             "begins_with" => {
-                parts.attr_values.insert(value_placeholder.clone(), AttributeValue::S(chip.value.clone()));
+                parts.attr_values.insert(value_placeholder.clone(), infer_attr_value(&chip.value));
                 format!("begins_with({name_placeholder}, {value_placeholder})")
             }
             "contains" => {
-                parts.attr_values.insert(value_placeholder.clone(), AttributeValue::S(chip.value.clone()));
+                parts.attr_values.insert(value_placeholder.clone(), infer_attr_value(&chip.value));
                 format!("contains({name_placeholder}, {value_placeholder})")
             }
             "exists" => {
@@ -135,9 +145,9 @@ pub fn build_expressions(
             }
             "between" => {
                 let v2 = format!(":v{i}b");
-                parts.attr_values.insert(value_placeholder.clone(), AttributeValue::S(chip.value.clone()));
-                parts.attr_values.insert(v2.clone(), AttributeValue::S(
-                    chip.value_end.clone().unwrap_or_default()
+                parts.attr_values.insert(value_placeholder.clone(), infer_attr_value(&chip.value));
+                parts.attr_values.insert(v2.clone(), infer_attr_value(
+                    &chip.value_end.clone().unwrap_or_default()
                 ));
                 format!("{name_placeholder} BETWEEN {value_placeholder} AND {v2}")
             }
@@ -146,13 +156,13 @@ pub fn build_expressions(
                 let items: Vec<&str> = chip.value.split(',').map(str::trim).collect();
                 let placeholders: Vec<String> = items.iter().enumerate().map(|(j, v)| {
                     let ph = format!(":v{i}i{j}");
-                    parts.attr_values.insert(ph.clone(), AttributeValue::S(v.to_string()));
+                    parts.attr_values.insert(ph.clone(), infer_attr_value(v));
                     ph
                 }).collect();
                 format!("{name_placeholder} IN ({})", placeholders.join(", "))
             }
             _ => {
-                parts.attr_values.insert(value_placeholder.clone(), AttributeValue::S(chip.value.clone()));
+                parts.attr_values.insert(value_placeholder.clone(), infer_attr_value(&chip.value));
                 format!("{name_placeholder} = {value_placeholder}")
             }
         };
