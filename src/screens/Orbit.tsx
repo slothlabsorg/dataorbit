@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import type { DbConnection, Screen } from '@/types'
 import { api } from '@/lib/tauri'
@@ -217,7 +218,7 @@ function EmptyOrbit({ onAddConnection }: { onAddConnection: () => void }) {
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
-import { useState, useEffect } from 'react'
+
 
 type RichProfile = { name: string; region: string | null; hasCredentials: boolean }
 
@@ -241,25 +242,38 @@ const AWS_REGIONS = [
 
 function SessionCard({
   profile,
+  isDefault,
   onConnect,
 }: {
   profile: RichProfile
+  isDefault?: boolean
   onConnect: (region: string) => void
 }) {
   const [region, setRegion] = useState(profile.region ?? 'us-east-1')
   const { label, sub } = parseProfileName(profile.name)
 
   return (
-    <div className="flex flex-col gap-3 p-3 rounded-xl border border-border bg-bg-elevated hover:border-primary/40 transition-colors">
+    <div className={`flex flex-col gap-3 p-3 rounded-xl border bg-bg-elevated hover:border-primary/40 transition-colors ${
+      isDefault ? 'border-primary/40' : 'border-border'
+    }`}>
       {/* Header */}
       <div className="flex items-center gap-2.5 min-w-0">
-        <div className="w-6 h-6 rounded-lg bg-success/10 border border-success/20 flex items-center justify-center flex-shrink-0">
-          <svg className="w-3 h-3 text-success" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <div className={`w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0 ${
+          isDefault ? 'bg-primary/10 border border-primary/30' : 'bg-success/10 border border-success/20'
+        }`}>
+          <svg className={`w-3 h-3 ${isDefault ? 'text-primary' : 'text-success'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/>
           </svg>
         </div>
         <div className="min-w-0 flex-1">
-          <p className="text-text-primary text-xs font-semibold truncate">{label}</p>
+          <div className="flex items-center gap-1.5">
+            <p className="text-text-primary text-xs font-semibold truncate">{label}</p>
+            {isDefault && (
+              <span className="flex-shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-primary/15 text-primary border border-primary/30 uppercase tracking-wider">
+                default
+              </span>
+            )}
+          </div>
           {sub && <p className="text-text-muted text-[10px] font-mono">{sub}</p>}
         </div>
       </div>
@@ -311,12 +325,31 @@ function AwsSessionCards({
   existingProfiles: Set<string>
   onQuickConnect: (profile: RichProfile, region: string) => void
 }) {
-  const available = profiles.filter(p =>
+  const [showAll, setShowAll] = useState(false)
+
+  // The [default] profile = whatever CloudOrbit pinned last
+  const defaultProfile = profiles.find(p => p.name === 'default' && p.hasCredentials)
+
+  // All named profiles with credentials (excluding default, shown separately)
+  const named = profiles.filter(p =>
     p.hasCredentials &&
-    p.name !== 'default' &&           // skip [default] — ambiguous
+    p.name !== 'default' &&
     !existingProfiles.has(p.name)
   )
-  if (available.length === 0) return null
+
+  // If there's a default: show it first (collapsed by default hides the named ones)
+  // If no default: show all named profiles
+  const hasDefault = !!defaultProfile && !existingProfiles.has('default')
+
+  // Nothing to show
+  if (!hasDefault && named.length === 0) return null
+
+  // Primary = default (if exists), else all named
+  // Secondary = named profiles when default exists (collapsed)
+  const secondary = hasDefault ? named : []
+  const shown = hasDefault
+    ? (showAll ? named : [])   // named shown only when expanded
+    : named
 
   return (
     <div>
@@ -325,9 +358,24 @@ function AwsSessionCards({
           <path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>
         </svg>
         Available AWS sessions
+        {secondary.length > 0 && !showAll && (
+          <span className="text-[10px] text-text-muted font-normal">
+            +{secondary.length} more
+          </span>
+        )}
       </h2>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-        {available.map(p => (
+        {/* Default session always first */}
+        {hasDefault && (
+          <SessionCard
+            key="default"
+            profile={defaultProfile!}
+            isDefault
+            onConnect={region => onQuickConnect(defaultProfile!, region)}
+          />
+        )}
+        {/* Named sessions — shown when expanded or when no default */}
+        {shown.map(p => (
           <SessionCard
             key={p.name}
             profile={p}
@@ -335,6 +383,17 @@ function AwsSessionCards({
           />
         ))}
       </div>
+      {secondary.length > 0 && (
+        <button
+          onClick={() => setShowAll(v => !v)}
+          className="mt-2 text-[11px] text-text-muted hover:text-primary transition-colors flex items-center gap-1"
+        >
+          <svg className={`w-3 h-3 transition-transform ${showAll ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <polyline points="6 9 12 15 18 9"/>
+          </svg>
+          {showAll ? 'Show less' : `Show ${secondary.length} other session${secondary.length !== 1 ? 's' : ''}`}
+        </button>
+      )}
     </div>
   )
 }
