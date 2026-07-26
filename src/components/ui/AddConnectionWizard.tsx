@@ -115,7 +115,16 @@ function ProfileSelect({ value, onChange }: { value: string; onChange: (v: strin
 
   useEffect(() => {
     api.listAwsProfiles()
-      .then(setProfiles)
+      .then(all => {
+        // Filter out [default] (ambiguous) and raw accountId-role names —
+        // those are CloudOrbit auto-generated names; users should pick the
+        // named profile or use the quick-connect flow instead.
+        const filtered = all.filter(p =>
+          p !== 'default' &&
+          !/^\d{10,12}-.+$/.test(p)   // skip "123456789012-RoleName" format
+        )
+        setProfiles(filtered.length > 0 ? filtered : all.filter(p => p !== 'default'))
+      })
       .catch(() => {/* not in Tauri or no ~/.aws */})
   }, [])
 

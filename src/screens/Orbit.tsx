@@ -247,17 +247,21 @@ function SessionCard({
   onConnect: (region: string) => void
 }) {
   const [region, setRegion] = useState(profile.region ?? 'us-east-1')
+  const { label, sub } = parseProfileName(profile.name)
 
   return (
     <div className="flex flex-col gap-3 p-3 rounded-xl border border-border bg-bg-elevated hover:border-primary/40 transition-colors">
       {/* Header */}
-      <div className="flex items-center gap-2.5">
+      <div className="flex items-center gap-2.5 min-w-0">
         <div className="w-6 h-6 rounded-lg bg-success/10 border border-success/20 flex items-center justify-center flex-shrink-0">
           <svg className="w-3 h-3 text-success" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/>
           </svg>
         </div>
-        <span className="text-text-primary text-xs font-semibold truncate min-w-0">{profile.name}</span>
+        <div className="min-w-0 flex-1">
+          <p className="text-text-primary text-xs font-semibold truncate">{label}</p>
+          {sub && <p className="text-text-muted text-[10px] font-mono">{sub}</p>}
+        </div>
       </div>
 
       {/* Region selector */}
@@ -283,6 +287,20 @@ function SessionCard({
   )
 }
 
+// Parse a CloudOrbit profile name like "233474023727-AWSReadOnlyAccess" into
+// a friendlier display: { label: "AWSReadOnlyAccess", sub: "••••3727" }
+// Falls back to { label: name, sub: '' } for non-matching names.
+function parseProfileName(name: string): { label: string; sub: string } {
+  // Pattern: <12-digit-accountId>-<roleName>
+  const match = name.match(/^(\d{10,12})-(.+)$/)
+  if (match) {
+    const accountId = match[1]
+    const roleName  = match[2]
+    return { label: roleName, sub: `••••${accountId.slice(-4)}` }
+  }
+  return { label: name, sub: '' }
+}
+
 // Cards for AWS profiles that have live credentials but no connection yet
 function AwsSessionCards({
   profiles,
@@ -293,7 +311,11 @@ function AwsSessionCards({
   existingProfiles: Set<string>
   onQuickConnect: (profile: RichProfile, region: string) => void
 }) {
-  const available = profiles.filter(p => p.hasCredentials && !existingProfiles.has(p.name))
+  const available = profiles.filter(p =>
+    p.hasCredentials &&
+    p.name !== 'default' &&           // skip [default] — ambiguous
+    !existingProfiles.has(p.name)
+  )
   if (available.length === 0) return null
 
   return (
