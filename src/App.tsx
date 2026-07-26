@@ -10,6 +10,7 @@ import { Orbit } from '@/screens/Orbit'
 import { Browse } from '@/screens/Browse'
 import { Explore } from '@/screens/Explore'
 import { Stream } from '@/screens/Stream'
+import { LiveMonitor, type MonitoredRow } from '@/screens/LiveMonitor'
 import { QueryHistory } from '@/screens/QueryHistory'
 import { Settings } from '@/screens/Settings'
 import { Docs } from '@/screens/Docs'
@@ -66,6 +67,15 @@ export default function App() {
     URL_MOCK_NEWS ? getUnreadIds(validItems).length : 0
   )
   const { toasts, show: showToast, dismiss: dismissToast } = useToast()
+  const [monitoredRows, setMonitoredRows] = useState<MonitoredRow[]>([])
+
+  function handleAddMonitorRow(row: MonitoredRow) {
+    setMonitoredRows(prev => {
+      if (prev.find(r => r.id === row.id)) return prev
+      return [...prev.slice(-4), row]  // max 5 rows
+    })
+    setScreen('monitor')
+  }
 
   // Load connections on mount
   useEffect(() => {
@@ -324,6 +334,7 @@ export default function App() {
           onAddConnection={() => { setWizardInitial(undefined); setWizardOpen(true) }}
           onDeleteConnection={handleDeleteConnection}
           newsUnread={newsUnread}
+          monitorCount={monitoredRows.length}
           bellItems={bellItems}
           onNewsMarkRead={handleNewsMarkRead}
           onTriggerUpdate={() => setUpdaterDismissed(false)}
@@ -367,6 +378,7 @@ export default function App() {
                 ))
               }
               showToast={showToast}
+              onAddMonitorRow={handleAddMonitorRow}
             />
           )}
           {screen === 'explore' && (
@@ -383,12 +395,20 @@ export default function App() {
                   } : c
                 ))
               }
+              onAddMonitorRow={handleAddMonitorRow}
             />
           )}
           {screen === 'stream'  && (
             <Stream
               activeConnection={activeConn}
               activeTable={activeTable}
+            />
+          )}
+          {screen === 'monitor' && (
+            <LiveMonitor
+              activeConnection={activeConn}
+              monitoredRows={monitoredRows}
+              onRemoveRow={id => setMonitoredRows(prev => prev.filter(r => r.id !== id))}
             />
           )}
           {screen === 'history' && <QueryHistory />}

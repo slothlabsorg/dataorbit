@@ -16,6 +16,7 @@ interface SidebarProps {
   onAddConnection: () => void
   onDeleteConnection: (id: string) => void
   newsUnread?: number
+  monitorCount?: number
 }
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
@@ -272,11 +273,21 @@ function IconOrbit() {
   )
 }
 
+function IconMonitor() {
+  return (
+    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <circle cx="12" cy="12" r="3"/>
+      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/>
+    </svg>
+  )
+}
+
 const topNav = [
   { id: 'orbit'   as Screen, label: 'Orbit',   icon: <IconOrbit /> },
   { id: 'browse'  as Screen, label: 'Browse',  icon: <IconBrowse /> },
   { id: 'explore' as Screen, label: 'Explore', icon: <IconExplore /> },
   { id: 'stream'  as Screen, label: 'Stream',  icon: <IconStream /> },
+  { id: 'monitor' as Screen, label: 'Live',    icon: <IconMonitor /> },
   { id: 'history' as Screen, label: 'History', icon: <IconHistory /> },
   { id: 'news'    as Screen, label: 'News',    icon: <IconNews /> },
 ]
@@ -293,7 +304,7 @@ export function Sidebar({
   screen, onNavigate, collapsed, onToggleCollapse,
   connections, activeConnectionId, activeTable,
   onSelectConnection, onSelectTable, onAddConnection, onDeleteConnection,
-  newsUnread = 0,
+  newsUnread = 0, monitorCount = 0,
 }: SidebarProps) {
   const w = collapsed ? 48 : 200
 
@@ -306,7 +317,9 @@ export function Sidebar({
       {/* Top nav */}
       <div className="py-2 border-b border-border-subtle flex-shrink-0">
         {topNav.map(item => {
-          const badge = item.id === 'news' && newsUnread > 0 ? newsUnread : undefined
+          const badge = item.id === 'news' && newsUnread > 0 ? newsUnread
+            : item.id === 'monitor' && monitorCount > 0 ? monitorCount
+            : undefined
           const isActive = screen === item.id
           return (
             <button

@@ -3,6 +3,7 @@ import { api } from '@/lib/tauri'
 import { downloadJson, downloadCsv } from '@/lib/export'
 import { motion, AnimatePresence } from 'framer-motion'
 import type { DbConnection, QueryResult, TableMeta } from '@/types'
+import type { MonitoredRow } from '@/screens/LiveMonitor'
 import { JsonTree } from '@/components/ui/JsonTree'
 import { RcuBadge } from '@/components/ui/Badge'
 import { EmptyState } from '@/components/ui/EmptyState'
@@ -18,6 +19,7 @@ interface BrowseProps {
   onUpdateTableSchema?: (connId: string, schema: TableMeta) => void
   showToast?: (msg: string, type: ToastType) => void
   onOpenExplore?: () => void
+  onAddMonitorRow?: (row: MonitoredRow) => void
 }
 
 type ViewMode = 'table' | 'json'
@@ -227,7 +229,7 @@ function TableSelector({ conn, activeTable, onSelect, onRefresh, refreshing, sch
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
-export function Browse({ activeConnection, activeTable, onSelectTable, onRefreshTables, onUpdateTableSchema, showToast, onOpenExplore }: BrowseProps) {
+export function Browse({ activeConnection, activeTable, onSelectTable, onRefreshTables, onUpdateTableSchema, showToast, onOpenExplore, onAddMonitorRow }: BrowseProps) {
   const [result, setResult]         = useState<QueryResult | null>(null)
   const [loading, setLoading]       = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -520,6 +522,30 @@ export function Browse({ activeConnection, activeTable, onSelectTable, onRefresh
                       className="text-[10px] px-1.5 py-0.5 rounded border border-border text-text-muted hover:border-primary/40 hover:text-primary transition-colors"
                     >
                       Edit
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (!activeConnection || !activeTable || !table) return
+                        const rowData = rows[selectedRow] as Record<string, unknown>
+                        const pkField = table.partitionKey ?? ''
+                        const skField = table.sortKey
+                        const pkValue = rowData[pkField] != null ? String(rowData[pkField]) : ''
+                        const skValue = skField && rowData[skField] != null ? String(rowData[skField]) : undefined
+                        onAddMonitorRow?.({
+                          id: `${activeConnection.id}:${activeTable}:${pkValue}${skValue ? ':' + skValue : ''}`,
+                          connectionId: activeConnection.id,
+                          tableName: activeTable,
+                          pkField,
+                          pkValue,
+                          skField,
+                          skValue,
+                          region: activeConnection.awsRegion,
+                        })
+                      }}
+                      className="text-[10px] px-1.5 py-0.5 rounded border border-border text-text-muted hover:border-success/40 hover:text-success transition-colors"
+                      title="Watch Live"
+                    >
+                      👁 Live
                     </button>
                     <button
                       onClick={() => setDeletingRow(rows[selectedRow] as Record<string, unknown>)}

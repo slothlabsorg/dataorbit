@@ -19,6 +19,7 @@ interface ShellProps {
   onAddConnection: () => void
   onDeleteConnection: (id: string) => void
   newsUnread?: number
+  monitorCount?: number
   bellItems?: BellItem[]
   onNewsMarkRead?: () => void
   onTriggerUpdate?: () => void
@@ -29,7 +30,7 @@ export function Shell({
   screen, onNavigate, sidebarCollapsed, onToggleSidebar,
   connections, activeConnectionId, activeTable,
   onSelectConnection, onSelectTable, onAddConnection, onDeleteConnection,
-  newsUnread, bellItems, onNewsMarkRead, onTriggerUpdate,
+  newsUnread, monitorCount, bellItems, onNewsMarkRead, onTriggerUpdate,
   children,
 }: ShellProps) {
   const activeConn = connections.find(c => c.id === activeConnectionId) ?? null
@@ -59,6 +60,7 @@ export function Shell({
           onAddConnection={onAddConnection}
           onDeleteConnection={onDeleteConnection}
           newsUnread={newsUnread}
+          monitorCount={monitorCount}
         />
 
         <div className="flex-1 min-w-0 overflow-hidden">

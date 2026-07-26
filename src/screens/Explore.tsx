@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect } from 'react'
 import type { DbConnection, FilterChip, FilterOp, QueryResult, QueryDef, JoinType, JoinResult, JoinResultRow, TraceCondition, TraceMatch, TraceResult, TraceOp } from '@/types'
+import type { MonitoredRow } from '@/screens/LiveMonitor'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { RcuBadge } from '@/components/ui/Badge'
 import { JsonTree } from '@/components/ui/JsonTree'
@@ -18,6 +19,7 @@ interface ExploreProps {
   activeConnection: DbConnection | null
   activeTable: string | null
   onUpdateSchema?: (connId: string, tableName: string, attrs: string[]) => void
+  onAddMonitorRow?: (row: MonitoredRow) => void
 }
 
 const OPS: FilterOp[] = ['=', '!=', '<', '<=', '>', '>=', 'begins_with', 'contains', 'exists', 'not_exists', 'between', 'in']
@@ -415,7 +417,7 @@ function TimePresetBar({ timestampField, allFields, onApply }: {
 
 // ── Single-table query tab ────────────────────────────────────────────────────
 
-function QueryTab({ activeConnection, activeTable, onUpdateSchema }: ExploreProps) {
+function QueryTab({ activeConnection, activeTable, onUpdateSchema, onAddMonitorRow }: ExploreProps) {
   const [chips, setChips]       = useState<FilterChip[]>([])
   const [limit, setLimit]       = useState(50)
   const [ascending, setAscending] = useState(true)
@@ -855,7 +857,7 @@ function QueryTab({ activeConnection, activeTable, onUpdateSchema }: ExploreProp
               </thead>
               <tbody>
                 {result.rows.map((row, i) => (
-                  <tr key={i} className="border-b border-border-subtle hover:bg-bg-surface cursor-pointer">
+                  <tr key={i} className="border-b border-border-subtle hover:bg-bg-surface cursor-pointer group/row">
                     {Object.values(row).map((val, j) => {
                       const str = val === null ? 'null' : typeof val === 'object' ? JSON.stringify(val) : String(val)
                       return (
@@ -864,6 +866,31 @@ function QueryTab({ activeConnection, activeTable, onUpdateSchema }: ExploreProp
                         </td>
                       )
                     })}
+                    <td className="px-1 py-1 w-8">
+                      <button
+                        onClick={e => {
+                          e.stopPropagation()
+                          if (!activeConnection || !activeTable) return
+                          const rowData = row as Record<string, unknown>
+                          const pkVal = rowData[pkField] != null ? String(rowData[pkField]) : ''
+                          const skVal = skField && rowData[skField] != null ? String(rowData[skField]) : undefined
+                          onAddMonitorRow?.({
+                            id: `${activeConnection.id}:${activeTable}:${pkVal}${skVal ? ':' + skVal : ''}`,
+                            connectionId: activeConnection.id,
+                            tableName: activeTable,
+                            pkField,
+                            pkValue: pkVal,
+                            skField,
+                            skValue: skVal,
+                            region: activeConnection.awsRegion,
+                          })
+                        }}
+                        className="opacity-0 group-hover/row:opacity-100 text-text-muted hover:text-success transition-all text-[10px] p-0.5 rounded"
+                        title="Watch Live"
+                      >
+                        👁
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -1892,7 +1919,7 @@ function TraceTab({ activeConnection }: { activeConnection: DbConnection | null 
 
 // ── Explore root ──────────────────────────────────────────────────────────────
 
-export function Explore({ activeConnection, activeTable, onUpdateSchema }: ExploreProps) {
+export function Explore({ activeConnection, activeTable, onUpdateSchema, onAddMonitorRow }: ExploreProps) {
   const [tab, setTab] = useState<'query' | 'join' | 'trace'>('query')
 
   if (!activeConnection && tab === 'query' && !activeTable) {
@@ -1925,7 +1952,7 @@ export function Explore({ activeConnection, activeTable, onUpdateSchema }: Explo
       </div>
 
       <div className="flex-1 overflow-hidden">
-        {tab === 'query' && <QueryTab activeConnection={activeConnection} activeTable={activeTable} onUpdateSchema={onUpdateSchema} />}
+        {tab === 'query' && <QueryTab activeConnection={activeConnection} activeTable={activeTable} onUpdateSchema={onUpdateSchema} onAddMonitorRow={onAddMonitorRow} />}
         {tab === 'join' && activeConnection && <CrossJoinTab connection={activeConnection} />}
         {tab === 'join' && !activeConnection && (
           <div className="h-full flex items-center justify-center">
