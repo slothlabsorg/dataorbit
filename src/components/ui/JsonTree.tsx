@@ -6,6 +6,24 @@ interface JsonTreeProps {
   defaultExpanded?: boolean
 }
 
+function CopyBtn({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false)
+  return (
+    <button
+      onClick={e => {
+        e.stopPropagation()
+        navigator.clipboard.writeText(value).catch(() => {})
+        setCopied(true)
+        setTimeout(() => setCopied(false), 1200)
+      }}
+      className="opacity-0 group-hover/jfield:opacity-100 ml-1 px-1 py-0 rounded text-[9px] text-text-muted hover:text-primary hover:bg-primary/10 transition-all"
+      title="Copy value"
+    >
+      {copied ? '✓' : '⎘'}
+    </button>
+  )
+}
+
 function JsonValue({ value, depth, defaultExpanded }: { value: unknown; depth: number; defaultExpanded: boolean }) {
   const [expanded, setExpanded] = useState(defaultExpanded || depth < 2)
 
@@ -13,7 +31,7 @@ function JsonValue({ value, depth, defaultExpanded }: { value: unknown; depth: n
   if (value === undefined) return <span className="text-text-muted font-mono text-xs">undefined</span>
   if (typeof value === 'boolean') return <span className="text-accent font-mono text-xs">{value.toString()}</span>
   if (typeof value === 'number') return <span className="text-warning font-mono text-xs">{value}</span>
-  if (typeof value === 'string') return <span className="text-success font-mono text-xs">"{value}"</span>
+  if (typeof value === 'string') return <span className="text-success font-mono text-xs">&quot;{value}&quot;</span>
 
   if (Array.isArray(value)) {
     if (value.length === 0) return <span className="text-text-muted font-mono text-xs">[]</span>
@@ -25,9 +43,10 @@ function JsonValue({ value, depth, defaultExpanded }: { value: unknown; depth: n
         {expanded && (
           <div className="ml-3 border-l border-border-subtle pl-2 mt-0.5 space-y-0.5">
             {value.map((v, i) => (
-              <div key={i} className="flex items-start gap-1">
+              <div key={i} className="flex items-start gap-1 group/jfield">
                 <span className="text-text-muted font-mono text-xs flex-shrink-0">{i}:</span>
                 <JsonValue value={v} depth={depth + 1} defaultExpanded={defaultExpanded} />
+                <CopyBtn value={typeof v === 'object' ? JSON.stringify(v) : String(v ?? '')} />
               </div>
             ))}
           </div>
@@ -47,9 +66,10 @@ function JsonValue({ value, depth, defaultExpanded }: { value: unknown; depth: n
         {expanded && (
           <div className="ml-3 border-l border-border-subtle pl-2 mt-0.5 space-y-0.5">
             {entries.map(([k, v]) => (
-              <div key={k} className="flex items-start gap-1">
+              <div key={k} className="flex items-start gap-1 group/jfield">
                 <span className="text-text-secondary font-mono text-xs flex-shrink-0">{k}:</span>
                 <JsonValue value={v} depth={depth + 1} defaultExpanded={defaultExpanded} />
+                <CopyBtn value={typeof v === 'object' ? JSON.stringify(v) : String(v ?? '')} />
               </div>
             ))}
           </div>

@@ -65,11 +65,13 @@ function JsonEditor({
   onSave,
   onCancel,
   saving,
+  title,
 }: {
   initial: string
   onSave: (val: Record<string, unknown>) => void
   onCancel: () => void
   saving: boolean
+  title?: string
 }) {
   const [text, setText] = useState(() => {
     try { return JSON.stringify(JSON.parse(initial), null, 2) } catch { return initial }
@@ -87,7 +89,7 @@ function JsonEditor({
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center justify-between px-3 py-2 border-b border-border-subtle flex-shrink-0">
-        <span className="text-text-primary text-xs font-semibold">Edit item</span>
+        <span className="text-text-primary text-xs font-semibold">{title ?? 'Edit item'}</span>
         <div className="flex items-center gap-2">
           <button onClick={onCancel} className="text-text-muted text-xs hover:text-text-primary">Cancel</button>
           <Button
@@ -286,6 +288,16 @@ export function Browse({ activeConnection, activeTable, onSelectTable, onRefresh
   const [clientSortField, setClientSortField] = useState<string | null>(null)
   const [clientSortDir, setClientSortDir] = useState<'asc' | 'desc'>('desc')
 
+  // Inline create
+  const [creatingNew, setCreatingNew] = useState(false)
+  const [newItemHighlight, setNewItemHighlight] = useState<string | null>(null)
+
+  // Copy on double-click preference
+  const copyOnDblClick = typeof window !== 'undefined'
+    ? (localStorage.getItem('dataorbit.copyOnDblClick') ?? 'true') === 'true'
+    : true
+  const [copiedCell, setCopiedCell] = useState<string | null>(null)
+
   const table = activeConnection?.tables?.find(t => t.name === activeTable) ?? null
 
   // Load schema on-demand then fetch rows
@@ -382,6 +394,45 @@ export function Browse({ activeConnection, activeTable, onSelectTable, onRefresh
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       showToast?.(msg.includes('AccessDenied') ? 'No delete permission on this table' : msg, 'error')
+    }
+  }
+
+  function buildTemplate(tbl: TableMeta): Record<string, unknown> {
+    const template: Record<string, unknown> = {}
+    if (tbl.partitionKey) template[tbl.partitionKey] = ''
+    if (tbl.sortKey) template[tbl.sortKey] = ''
+    for (const attr of (tbl.attributes ?? []).slice(0, 5)) {
+      if (!template[attr]) template[attr] = ''
+    }
+    return template
+  }
+
+  function handleCreateNew() {
+    if (!table) return
+    const template = buildTemplate(table)
+    setCreatingNew(true)
+    setEditingRow(template)
+    setSelectedRow(null)
+  }
+
+  async function handleSaveNew(item: Record<string, unknown>) {
+    if (!activeConnection || !activeTable) return
+    setSaving(true)
+    try {
+      await api.putItem(activeConnection.id, activeTable, item)
+      setCreatingNew(false)
+      setEditingRow(null)
+      showToast?.('Item created', 'success')
+      // Highlight the new item for 2 seconds
+      const pkVal = table?.partitionKey ? String(item[table.partitionKey] ?? '') : ''
+      setNewItemHighlight(pkVal)
+      setTimeout(() => setNewItemHighlight(null), 2000)
+      loadRows(false)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      showToast?.(msg.includes('AccessDenied') ? 'No write permission on this table' : msg, 'error')
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -513,6 +564,17 @@ export function Browse({ activeConnection, activeTable, onSelectTable, onRefresh
               </button>
             </div>
           )}
+
+          {/* New item button */}
+          {table && (
+            <button
+              onClick={handleCreateNew}
+              className="px-2 py-1 rounded border border-success/40 text-[10px] text-success hover:bg-success/10 transition-colors font-medium"
+              title="Create new item"
+            >
+              + New item
+            </button>
+          )}
         </div>
       )}
 
@@ -553,25 +615,41 @@ export function Browse({ activeConnection, activeTable, onSelectTable, onRefresh
                     </tr>
                   </thead>
                   <tbody>
-                    {sortedRows.map((row, i) => (
+                    {sortedRows.map((row, i) => {
+                      const rowPkVal = table?.partitionKey ? String((row as Record<string, unknown>)[table.partitionKey] ?? '') : ''
+                      const isHighlighted = newItemHighlight != null && rowPkVal === newItemHighlight
+                      return (
                       <tr
                         key={i}
-                        onClick={() => { setSelectedRow(selectedRow === i ? null : i); setEditingRow(null) }}
+                        onClick={() => { setSelectedRow(selectedRow === i ? null : i); setEditingRow(null); setCreatingNew(false) }}
                         className={`border-b border-border-subtle cursor-pointer transition-colors ${
-                          selectedRow === i ? 'bg-primary/8' : 'hover:bg-bg-surface'
+                          isHighlighted ? 'bg-success/12 animate-pulse' : selectedRow === i ? 'bg-primary/8' : 'hover:bg-bg-surface'
                         }`}
                       >
                         {allCols.map(col => {
                           const val = (row as Record<string, unknown>)[col]
                           const str = sanitizeDisplay(val)
+                          const cellId = `${i}-${col}`
                           return (
-                            <td key={col} className="px-3 py-1.5 text-text-secondary whitespace-nowrap max-w-[220px] overflow-hidden text-ellipsis border-r border-border-subtle last:border-r-0" title={str}>
-                              {str}
+                            <td
+                              key={col}
+                              className={`px-3 py-1.5 text-text-secondary whitespace-nowrap max-w-[220px] overflow-hidden text-ellipsis border-r border-border-subtle last:border-r-0 ${copiedCell === cellId ? 'bg-success/15' : ''}`}
+                              title={str}
+                              onDoubleClick={e => {
+                                if (!copyOnDblClick) return
+                                e.stopPropagation()
+                                navigator.clipboard.writeText(str).catch(() => {})
+                                setCopiedCell(cellId)
+                                setTimeout(() => setCopiedCell(null), 800)
+                              }}
+                            >
+                              {copiedCell === cellId ? <span className="text-success text-[10px]">✓ Copied</span> : str}
                             </td>
                           )
                         })}
                       </tr>
-                    ))}
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -658,9 +736,10 @@ export function Browse({ activeConnection, activeTable, onSelectTable, onRefresh
               <div className="w-[380px] h-full">
                 <JsonEditor
                   initial={JSON.stringify(editingRow, null, 2)}
-                  onSave={handleSaveEdit}
-                  onCancel={() => setEditingRow(null)}
+                  onSave={creatingNew ? handleSaveNew : handleSaveEdit}
+                  onCancel={() => { setEditingRow(null); setCreatingNew(false) }}
                   saving={saving}
+                  title={creatingNew ? 'New item' : 'Edit item'}
                 />
               </div>
             </motion.div>

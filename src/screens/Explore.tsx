@@ -245,7 +245,7 @@ function FilterChipBadge({ chip, onRemove, onChange }: {
 
 // Timestamp field detection (mirrors TIMESTAMP_CANDIDATES defined later for TraceTab)
 const TS_FIELD_NAMES = new Set([
-  'timestamp','createdAt','updatedAt','eventTime','ts','time',
+  'timestamp','createdAt','createdOn','updatedAt','eventTime','ts','time',
   'insertedAt','processedAt','signupAt','registeredAt','lastLoginAt',
   'installedAt','resolvedAt','date',
 ])
@@ -347,10 +347,11 @@ function FilterBuilder({ onAdd, attributes }: { onAdd: (chip: FilterChip) => voi
 
 // ── Time preset bar ───────────────────────────────────────────────────────────
 
-function TimePresetBar({ timestampField, allFields, onApply }: {
+function TimePresetBar({ timestampField, allFields, onApply, isScanMode }: {
   timestampField: string | null
   allFields: string[]
   onApply: (minutes: number, field?: string) => void
+  isScanMode?: boolean
 }) {
   const [customN, setCustomN]       = useState('30')
   const [customUnit, setCustomUnit] = useState<'minutes' | 'hours' | 'days'>('minutes')
@@ -366,7 +367,67 @@ function TimePresetBar({ timestampField, allFields, onApply }: {
     { label: '7d',   min: 10080 },
   ]
 
+  // Prominent scan presets (fewer options, larger buttons)
+  const scanPresets = [
+    { label: 'Last 1h',  min: 60    },
+    { label: 'Last 24h', min: 1440  },
+    { label: 'Last 7d',  min: 10080 },
+  ]
+
   const unitsToMin = { minutes: 1, hours: 60, days: 1440 }
+
+  // If in scan mode and a timestamp field is detected, show a prominent tip
+  if (isScanMode && effectiveField) {
+    return (
+      <div className="rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 space-y-2">
+        <div className="flex items-center gap-2">
+          <svg className="w-3.5 h-3.5 text-primary flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+          </svg>
+          <span className="text-[11px] text-primary font-medium">Tip: Use a time filter to limit the scan scope</span>
+          <span className="text-[10px] text-text-muted ml-1">field: <code className="font-mono text-text-secondary">{effectiveField}</code></span>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          {scanPresets.map(p => (
+            <button
+              key={p.min}
+              onClick={() => onApply(p.min, effectiveField || undefined)}
+              className="px-3 py-1 text-xs rounded-md border border-primary/40 text-primary bg-primary/8 hover:bg-primary/15 font-medium transition-colors"
+            >
+              {p.label}
+            </button>
+          ))}
+          <button
+            onClick={() => setShowCustom(s => !s)}
+            className={`px-2 py-1 text-[11px] rounded-md border transition-colors ${
+              showCustom ? 'border-primary/40 text-primary bg-primary/8' : 'border-border text-text-muted hover:border-primary/40 hover:text-primary'
+            }`}
+          >
+            Custom…
+          </button>
+          {showCustom && (
+            <div className="flex items-center gap-1.5">
+              <input type="number" min={1} max={999} value={customN} onChange={e => setCustomN(e.target.value)}
+                className="field-input w-16 text-[11px] py-0.5" />
+              <select value={customUnit} onChange={e => setCustomUnit(e.target.value as typeof customUnit)}
+                className="field-input w-24 text-[11px] py-0.5">
+                <option value="minutes">Minutes</option>
+                <option value="hours">Hours</option>
+                <option value="days">Days</option>
+              </select>
+              <button
+                onClick={() => { const mins = Number(customN) * unitsToMin[customUnit]; if (effectiveField) onApply(mins, effectiveField || undefined) }}
+                disabled={!customN}
+                className="px-2 py-0.5 text-[11px] rounded border border-primary/40 text-primary hover:bg-primary/10 disabled:opacity-30 transition-colors"
+              >
+                Apply
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="flex items-center gap-2 flex-wrap">
@@ -555,10 +616,10 @@ function QueryTab({ activeConnection, activeTable, initialIndex, onUpdateSchema,
   const opMode   = detectOpMode(chips, pkField, !!activeIndex)
   const rcu      = estimateRcu(opMode, table?.itemCount ?? 1000)
 
-  // Detect timestamp field — sk first, then pk
+  // Detect timestamp field — sk first, then pk, then attributes
   const timestampField = (skField && isTimestampField(skField)) ? skField
     : (pkField && isTimestampField(pkField)) ? pkField
-    : null
+    : (table?.attributes ?? []).find(a => isTimestampField(a)) ?? null
 
   function applyTimePreset(minutes: number, overrideField?: string) {
     const field = overrideField ?? timestampField
@@ -800,6 +861,7 @@ function QueryTab({ activeConnection, activeTable, initialIndex, onUpdateSchema,
           timestampField={timestampField}
           allFields={[pkField, ...(skField ? [skField] : []), ...(table?.attributes ?? [])].filter(Boolean)}
           onApply={applyTimePreset}
+          isScanMode={opMode === 'Scan' || opMode === 'IndexScan'}
         />
 
         {/* Scan warning */}

@@ -37,6 +37,9 @@ export function Settings() {
   const [rcuWarning, setRcuWarning]        = useState(true)
   const [rcuThreshold, setRcuThreshold]    = useState(100)
   const [defaultLimit, setDefaultLimit]    = useState(50)
+  const [copyOnDblClick, setCopyOnDblClick] = useState(() => {
+    return (localStorage.getItem('dataorbit.copyOnDblClick') ?? 'true') === 'true'
+  })
 
   return (
     <div className="h-full overflow-y-auto">
@@ -90,6 +93,15 @@ export function Settings() {
         <Section title="Streams">
           <SettingRow label="Sound on new event" description="Play a subtle chime when a new stream event arrives.">
             <Toggle checked={streamSound} onChange={setStreamSound} />
+          </SettingRow>
+        </Section>
+
+        <Section title="Data Browsing">
+          <SettingRow label="Double-click to copy" description="Double-click a table cell to copy its value to the clipboard.">
+            <Toggle checked={copyOnDblClick} onChange={v => {
+              setCopyOnDblClick(v)
+              localStorage.setItem('dataorbit.copyOnDblClick', String(v))
+            }} />
           </SettingRow>
         </Section>
 
