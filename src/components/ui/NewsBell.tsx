@@ -18,6 +18,7 @@ interface Props {
   // Optional: when the user clicks the "Update now" item we route them to
   // the existing UpdateBanner install flow rather than re-implementing it.
   onTriggerUpdate?: () => void
+  onNavigateToNews?: () => void
 }
 
 function timeAgo(iso: string): string {
@@ -40,7 +41,7 @@ function kindLabel(kind: OldNewsItem['kind']): { label: string; cls: string } {
   }
 }
 
-export function NewsBell({ items, unreadCount, loading, onMarkAllRead, onTriggerUpdate }: Props) {
+export function NewsBell({ items, unreadCount, loading, onMarkAllRead, onTriggerUpdate, onNavigateToNews }: Props) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
@@ -121,13 +122,17 @@ export function NewsBell({ items, unreadCount, loading, onMarkAllRead, onTrigger
               )}
               {items.map(item => {
                 const k = kindLabel(item.kind)
-                const clickable = item.kind === 'update-available' || item.url
+                const clickable = item.kind === 'update-available' || item.kind === 'release' || item.kind === 'announcement' || item.url
                 const onClick = () => {
                   if (item.kind === 'update-available' && onTriggerUpdate) {
                     onTriggerUpdate()
                     setOpen(false)
+                  } else if (item.kind === 'release' || item.kind === 'announcement') {
+                    onNavigateToNews?.()
+                    setOpen(false)
                   } else if (item.url) {
                     window.open(item.url, '_blank', 'noopener,noreferrer')
+                    setOpen(false)
                   }
                 }
                 return (

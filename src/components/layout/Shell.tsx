@@ -36,6 +36,25 @@ export function Shell({
   const activeConn = connections.find(c => c.id === activeConnectionId) ?? null
   const activeTableMeta = activeConn?.tables?.find(t => t.name === activeTable) ?? null
 
+  // ── Table favorites (reactive state) ────────────────────────────────────────
+  const [tableFavorites, setTableFavorites] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem('dataorbit.tableFavorites')
+      return new Set(raw ? JSON.parse(raw) : [])
+    } catch { return new Set() }
+  })
+
+  const toggleTableFavorite = useCallback((connId: string, tableName: string) => {
+    const key = `${connId}:${tableName}`
+    setTableFavorites(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      try { localStorage.setItem('dataorbit.tableFavorites', JSON.stringify([...next])) } catch {}
+      return next
+    })
+  }, [])
+
   // ── Resizable sidebar ───────────────────────────────────────────────────────
   const [sidebarW, setSidebarW] = useState(() => {
     try { return Number(localStorage.getItem('dataorbit.sidebarWidth')) || 200 } catch { return 200 }
@@ -67,6 +86,7 @@ export function Shell({
         newsUnread={newsUnread}
         onNewsMarkRead={onNewsMarkRead}
         onTriggerUpdate={onTriggerUpdate}
+        onNavigateToNews={() => onNavigate('news')}
       />
 
       <div className="flex flex-1 overflow-hidden">
@@ -85,6 +105,8 @@ export function Shell({
             onDeleteConnection={onDeleteConnection}
             newsUnread={newsUnread}
             monitorCount={monitorCount}
+            tableFavorites={tableFavorites}
+            onToggleTableFavorite={toggleTableFavorite}
           />
         </div>
 

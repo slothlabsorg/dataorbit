@@ -18,6 +18,7 @@ const MOCK_MODE = (() => {
 interface ExploreProps {
   activeConnection: DbConnection | null
   activeTable: string | null
+  initialIndex?: string
   onUpdateSchema?: (connId: string, tableName: string, attrs: string[]) => void
   onAddMonitorRow?: (row: MonitoredRow) => void
 }
@@ -435,7 +436,7 @@ function TimePresetBar({ timestampField, allFields, onApply }: {
 
 // ── Single-table query tab ────────────────────────────────────────────────────
 
-function QueryTab({ activeConnection, activeTable, onUpdateSchema, onAddMonitorRow }: ExploreProps) {
+function QueryTab({ activeConnection, activeTable, initialIndex, onUpdateSchema, onAddMonitorRow }: ExploreProps) {
   const [chips, setChips]       = useState<FilterChip[]>([])
   const [limit, setLimit]       = useState(50)
   const [ascending, setAscending] = useState(true)
@@ -482,6 +483,13 @@ function QueryTab({ activeConnection, activeTable, onUpdateSchema, onAddMonitorR
     setTimeout(() => setCodeCopied(false), 1500)
   }
   const [activeIndex, setActiveIndex] = useState<string | null>(null)
+
+  // Set initial index when navigating from Browse schema panel
+  useEffect(() => {
+    if (initialIndex) {
+      setActiveIndex(initialIndex)
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!activeConnection) {
     return (
@@ -894,7 +902,7 @@ function QueryTab({ activeConnection, activeTable, onUpdateSchema, onAddMonitorR
             <table className="w-full text-xs font-mono">
               <thead className="sticky top-0 bg-bg-elevated border-b border-border z-10">
                 <tr>
-                  {Object.keys(result.rows[0]).map(col => (
+                  {[...new Set(result.rows.flatMap(r => Object.keys(r as Record<string, unknown>)))].map(col => (
                     <th key={col} className="text-left px-3 py-2 text-text-muted font-semibold whitespace-nowrap border-r border-border-subtle last:border-r-0">{col}</th>
                   ))}
                 </tr>
@@ -902,10 +910,11 @@ function QueryTab({ activeConnection, activeTable, onUpdateSchema, onAddMonitorR
               <tbody>
                 {result.rows.map((row, i) => (
                   <tr key={i} className="border-b border-border-subtle hover:bg-bg-surface cursor-pointer group/row">
-                    {Object.values(row).map((val, j) => {
-                      const str = val === null ? 'null' : typeof val === 'object' ? JSON.stringify(val) : String(val)
+                    {[...new Set(result.rows.flatMap(r => Object.keys(r as Record<string, unknown>)))].map(col => {
+                      const val = (row as Record<string, unknown>)[col]
+                      const str = val === null || val === undefined ? '' : typeof val === 'object' ? JSON.stringify(val) : String(val)
                       return (
-                        <td key={j} className="px-3 py-1.5 text-text-secondary whitespace-nowrap max-w-[180px] overflow-hidden text-ellipsis border-r border-border-subtle last:border-r-0" title={str}>
+                        <td key={col} className="px-3 py-1.5 text-text-secondary whitespace-nowrap max-w-[180px] overflow-hidden text-ellipsis border-r border-border-subtle last:border-r-0" title={str}>
                           {str}
                         </td>
                       )
@@ -1972,7 +1981,7 @@ function TraceTab({ activeConnection }: { activeConnection: DbConnection | null 
 
 // ── Explore root ──────────────────────────────────────────────────────────────
 
-export function Explore({ activeConnection, activeTable, onUpdateSchema, onAddMonitorRow }: ExploreProps) {
+export function Explore({ activeConnection, activeTable, initialIndex, onUpdateSchema, onAddMonitorRow }: ExploreProps) {
   const [tab, setTab] = useState<'query' | 'join' | 'trace'>('query')
 
   if (!activeConnection && tab === 'query' && !activeTable) {
@@ -2005,7 +2014,7 @@ export function Explore({ activeConnection, activeTable, onUpdateSchema, onAddMo
       </div>
 
       <div className="flex-1 overflow-hidden">
-        {tab === 'query' && <QueryTab activeConnection={activeConnection} activeTable={activeTable} onUpdateSchema={onUpdateSchema} onAddMonitorRow={onAddMonitorRow} />}
+        {tab === 'query' && <QueryTab activeConnection={activeConnection} activeTable={activeTable} initialIndex={initialIndex} onUpdateSchema={onUpdateSchema} onAddMonitorRow={onAddMonitorRow} />}
         {tab === 'join' && activeConnection && <CrossJoinTab connection={activeConnection} />}
         {tab === 'join' && !activeConnection && (
           <div className="h-full flex items-center justify-center">

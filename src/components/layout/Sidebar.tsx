@@ -17,6 +17,8 @@ interface SidebarProps {
   onDeleteConnection: (id: string) => void
   newsUnread?: number
   monitorCount?: number
+  tableFavorites?: Set<string>
+  onToggleTableFavorite?: (connId: string, tableName: string) => void
 }
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
@@ -107,6 +109,8 @@ function ConnectionItem({
   onSelect,
   onSelectTable,
   onDelete,
+  tableFavorites,
+  onToggleTableFavorite,
 }: {
   conn: DbConnection
   isActive: boolean
@@ -115,28 +119,16 @@ function ConnectionItem({
   onSelect: () => void
   onSelectTable: (table: string) => void
   onDelete: () => void
+  tableFavorites: Set<string>
+  onToggleTableFavorite: (connId: string, tableName: string) => void
 }) {
   const [open, setOpen] = useState(isActive)
   const [tableSearch, setTableSearch] = useState('')
   const hasTables = (conn.tables?.length ?? 0) > 0
 
-  // Read table favorites from localStorage
-  const tableFavorites: Set<string> = (() => {
-    try {
-      const raw = localStorage.getItem('dataorbit.tableFavorites')
-      return new Set(raw ? JSON.parse(raw) : [])
-    } catch { return new Set<string>() }
-  })()
-
   function toggleTableFavorite(e: React.MouseEvent, tableName: string) {
     e.stopPropagation()
-    const key = `${conn.id}:${tableName}`
-    const next = new Set(tableFavorites)
-    if (next.has(key)) next.delete(key)
-    else next.add(key)
-    try { localStorage.setItem('dataorbit.tableFavorites', JSON.stringify([...next])) } catch {}
-    // Force re-render by toggling a dummy state
-    setTableSearch(s => s)
+    onToggleTableFavorite(conn.id, tableName)
   }
 
   const rawFiltered = tableSearch.trim()
@@ -343,8 +335,13 @@ export function Sidebar({
   connections, activeConnectionId, activeTable,
   onSelectConnection, onSelectTable, onAddConnection, onDeleteConnection,
   newsUnread = 0, monitorCount = 0,
+  tableFavorites: tableFavoritesProp, onToggleTableFavorite,
 }: SidebarProps) {
   const w = collapsed ? 48 : '100%'
+
+  // Fallback for backwards compat
+  const tableFavorites = tableFavoritesProp ?? new Set<string>()
+  const handleToggleFavorite = onToggleTableFavorite ?? (() => {})
 
   return (
     <motion.div
@@ -427,6 +424,8 @@ export function Sidebar({
               onSelect={() => onSelectConnection(conn.id)}
               onSelectTable={(t) => onSelectTable(conn.id, t)}
               onDelete={() => onDeleteConnection(conn.id)}
+              tableFavorites={tableFavorites}
+              onToggleTableFavorite={handleToggleFavorite}
             />
           ))}
         </div>

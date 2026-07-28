@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import type { Screen, DbConnection, TableMeta } from '@/types'
 import { api } from '@/lib/tauri'
 import { useConnectionHealth } from '@/hooks/useConnectionHealth'
@@ -68,6 +68,7 @@ export default function App() {
   )
   const { toasts, show: showToast, dismiss: dismissToast } = useToast()
   const [monitoredRows, setMonitoredRows] = useState<MonitoredRow[]>([])
+  const pendingExploreIndexRef = useRef<string | null>(null)
 
   function handleAddMonitorRow(row: MonitoredRow) {
     setMonitoredRows(prev => {
@@ -111,8 +112,20 @@ export default function App() {
   function handleSelectTable(connId: string, table: string) {
     setActiveConnId(connId)
     setActiveTable(table)
+    // Track recent tables for Orbit ordering
+    addRecentTable(connId, table)
     // Stay in Explore or Stream when user clicks a table — they want to query it there
     if (screen === 'home' || screen === 'orbit' || screen === 'history') setScreen('browse')
+  }
+
+  function addRecentTable(connId: string, tableName: string) {
+    const key = `${connId}:${tableName}`
+    try {
+      const raw = localStorage.getItem('dataorbit.recentTables')
+      const list: string[] = raw ? JSON.parse(raw) : []
+      const next = [key, ...list.filter(k => k !== key)].slice(0, 20)
+      localStorage.setItem('dataorbit.recentTables', JSON.stringify(next))
+    } catch {}
   }
 
   async function handleAddConnection(conn: Omit<DbConnection, 'id' | 'status'>) {
@@ -379,12 +392,17 @@ export default function App() {
               }
               showToast={showToast}
               onAddMonitorRow={handleAddMonitorRow}
+              onOpenExplore={(indexName?: string) => {
+                pendingExploreIndexRef.current = indexName ?? null
+                setScreen('explore')
+              }}
             />
           )}
           {screen === 'explore' && (
             <Explore
               activeConnection={activeConn}
               activeTable={activeTable}
+              initialIndex={pendingExploreIndexRef.current ?? undefined}
               onUpdateSchema={(connId, tableName, attrs) =>
                 setConnections(prev => prev.map(c =>
                   c.id === connId ? {

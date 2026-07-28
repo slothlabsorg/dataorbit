@@ -433,11 +433,26 @@ export function Orbit({ connections, connErrors, onSelectConnection, onSelectTab
     .map(t => ({ conn: c, table: t, isFavorite: true as const }))
   )
 
-  // Non-favorite tables (fill remaining up to 6)
+  // Non-favorite tables (fill remaining up to 6) — sorted by recency
+  const recentKeys: string[] = (() => {
+    try {
+      const raw = localStorage.getItem('dataorbit.recentTables')
+      return raw ? JSON.parse(raw) : []
+    } catch { return [] }
+  })()
+
   const otherTables = connections.flatMap(c =>
     (c.tables ?? []).filter(t => !tableFavorites.has(`${c.id}:${t.name}`))
-    .map(t => ({ conn: c, table: t, isFavorite: false as const }))
-  ).slice(0, Math.max(0, 8 - favoriteTables.length))
+    .map(t => ({ conn: c, table: t, isFavorite: false as const,
+      recentIdx: recentKeys.indexOf(`${c.id}:${t.name}`) }))
+  )
+  .sort((a, b) => {
+    if (a.recentIdx === -1 && b.recentIdx === -1) return 0
+    if (a.recentIdx === -1) return 1
+    if (b.recentIdx === -1) return -1
+    return a.recentIdx - b.recentIdx
+  })
+  .slice(0, Math.max(0, 8 - favoriteTables.length))
 
   const quickTables = [...favoriteTables, ...otherTables]
 

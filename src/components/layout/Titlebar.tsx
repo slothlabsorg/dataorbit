@@ -25,6 +25,7 @@ interface TitlebarProps {
   newsUnread?: number
   onNewsMarkRead?: () => void
   onTriggerUpdate?: () => void
+  onNavigateToNews?: () => void
 }
 
 function AppLogo() {
@@ -70,7 +71,7 @@ function WindowControls() {
   )
 }
 
-export function Titlebar({ activeConnection, bellItems = [], newsUnread = 0, onNewsMarkRead, onTriggerUpdate }: TitlebarProps) {
+export function Titlebar({ activeConnection, bellItems = [], newsUnread = 0, onNewsMarkRead, onTriggerUpdate, onNavigateToNews }: TitlebarProps) {
   return (
     <div
       data-tauri-drag-region
@@ -95,6 +96,7 @@ export function Titlebar({ activeConnection, bellItems = [], newsUnread = 0, onN
           loading={false}
           onMarkAllRead={onNewsMarkRead ?? (() => {})}
           onTriggerUpdate={onTriggerUpdate}
+          onNavigateToNews={onNavigateToNews}
         />
 
         <div className="flex items-center gap-3">

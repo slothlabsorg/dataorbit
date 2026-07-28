@@ -18,7 +18,7 @@ interface BrowseProps {
   onRefreshTables?: (connId: string, tables: TableMeta[]) => void
   onUpdateTableSchema?: (connId: string, schema: TableMeta) => void
   showToast?: (msg: string, type: ToastType) => void
-  onOpenExplore?: () => void
+  onOpenExplore?: (indexName?: string) => void
   onAddMonitorRow?: (row: MonitoredRow) => void
 }
 
@@ -407,6 +407,12 @@ export function Browse({ activeConnection, activeTable, onSelectTable, onRefresh
     })
   }, [rows, clientSortField, clientSortDir])
 
+  // Union of all fields across all rows (fixes column alignment when rows have different fields)
+  const allCols = useMemo(
+    () => [...new Set(rows.flatMap(r => Object.keys(r as Record<string, unknown>)))],
+    [rows]
+  )
+
   return (
     <div className="flex flex-col h-full overflow-hidden">
       <TableSelector
@@ -421,7 +427,7 @@ export function Browse({ activeConnection, activeTable, onSelectTable, onRefresh
 
       <AnimatePresence>
         {schemaOpen && table && (
-          <SchemaPanel table={table} onClose={() => setSchemaOpen(false)} onIndexClick={() => onOpenExplore?.()} />
+          <SchemaPanel table={table} onClose={() => setSchemaOpen(false)} onIndexClick={(indexName) => onOpenExplore?.(indexName)} />
         )}
       </AnimatePresence>
 
@@ -539,7 +545,7 @@ export function Browse({ activeConnection, activeTable, onSelectTable, onRefresh
                 <table className="w-full text-xs font-mono">
                   <thead className="sticky top-0 bg-bg-elevated border-b border-border z-10">
                     <tr>
-                      {Object.keys(rows[0] ?? {}).map(col => (
+                      {allCols.map(col => (
                         <th key={col} className="text-left px-3 py-2 text-text-muted font-semibold whitespace-nowrap border-r border-border-subtle last:border-r-0">
                           {col}
                         </th>
@@ -555,7 +561,8 @@ export function Browse({ activeConnection, activeTable, onSelectTable, onRefresh
                           selectedRow === i ? 'bg-primary/8' : 'hover:bg-bg-surface'
                         }`}
                       >
-                        {Object.entries(row as Record<string, unknown>).map(([col, val]) => {
+                        {allCols.map(col => {
+                          const val = (row as Record<string, unknown>)[col]
                           const str = sanitizeDisplay(val)
                           return (
                             <td key={col} className="px-3 py-1.5 text-text-secondary whitespace-nowrap max-w-[220px] overflow-hidden text-ellipsis border-r border-border-subtle last:border-r-0" title={str}>
