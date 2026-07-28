@@ -278,6 +278,34 @@ export default function App() {
     })
   }, [])
 
+  // Refresh news when window gains focus (with 5-min debounce)
+  useEffect(() => {
+    if (URL_MOCK || URL_MOCK_NEWS) return
+    let lastFetch = 0
+    const MIN_INTERVAL = 5 * 60 * 1000 // 5 min
+
+    const onFocus = () => {
+      if (Date.now() - lastFetch > MIN_INTERVAL) {
+        lastFetch = Date.now()
+        loadNews().then(items => {
+          setNewsItems(items)
+          setNewsUnread(getUnreadIds(items).length)
+        }).catch(() => {})
+      }
+    }
+
+    window.addEventListener('focus', onFocus)
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') onFocus()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+
+    return () => {
+      window.removeEventListener('focus', onFocus)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [])
+
   // Bell items: synthetic update entry (when dismissed) + one per kind from news
   const bellItems = useMemo(() => {
     type BellItem = { id: string; kind: 'update-available' | 'release' | 'announcement'; title: string; body?: string; date: string; url?: string }

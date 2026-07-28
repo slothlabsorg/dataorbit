@@ -508,6 +508,14 @@ function QueryTab({ activeConnection, activeTable, initialIndex, onUpdateSchema,
   const [result, setResult]     = useState<QueryResult | null>(null)
   const [allFiltered, setAllFiltered] = useState<typeof mockRows>([])
   const [loading, setLoading]   = useState(false)
+
+  // ── Live Query mode ──────────────────────────────────────────────────────
+  const [liveMode, setLiveMode] = useState(false)
+  const [liveInterval, setLiveInterval] = useState(5)
+  const liveTimer = useRef<ReturnType<typeof setInterval> | null>(null)
+  const prevSnapshot = useRef<Record<string, unknown>[]>([])
+  const [diffRows, setDiffRows] = useState<{ row: Record<string, unknown>; status: 'new' | 'deleted' | 'changed' | 'same' }[]>([])
+  const [liveChangeCount, setLiveChangeCount] = useState(0)
   const [viewMode, setViewMode] = useState<'table' | 'json'>('table')
   const [page, setPage]         = useState(0)
   const [pendingConfirmScan, setPendingConfirmScan] = useState(false)
@@ -762,6 +770,95 @@ function QueryTab({ activeConnection, activeTable, initialIndex, onUpdateSchema,
 
   const hasMore = result != null && allFiltered.length > result.rows.length
 
+  // ── Live Query polling ────────────────────────────────────────────────────
+  const liveQueryPoll = useCallback(async () => {
+    if (!activeConnection?.id || !activeTable) return
+    try {
+      const def: QueryDef = {
+        connectionId:      activeConnection.id,
+        table:             activeTable,
+        indexName:         activeIndex ?? undefined,
+        partitionKeyField: pkField,
+        sortKeyField:      skField,
+        filters:           chips,
+        limit,
+        scanIndexForward:  ascending,
+      }
+      const raw = await api.queryTable(def)
+      const newRows = raw.rows as Record<string, unknown>[]
+      const prev = prevSnapshot.current
+      const realPkField = table?.partitionKey ?? pkField
+
+      // Build a map of previous rows by PK
+      const prevMap = new Map<string, Record<string, unknown>>()
+      for (const r of prev) prevMap.set(String(r[realPkField] ?? ''), r)
+
+      const newMap = new Map<string, Record<string, unknown>>()
+      for (const r of newRows) newMap.set(String(r[realPkField] ?? ''), r)
+
+      const diffs: { row: Record<string, unknown>; status: 'new' | 'deleted' | 'changed' | 'same' }[] = []
+      let changes = 0
+
+      // Check new/changed rows
+      for (const r of newRows) {
+        const pk = String(r[realPkField] ?? '')
+        const oldRow = prevMap.get(pk)
+        if (!oldRow) {
+          diffs.push({ row: r, status: 'new' })
+          changes++
+        } else if (JSON.stringify(oldRow) !== JSON.stringify(r)) {
+          diffs.push({ row: r, status: 'changed' })
+          changes++
+        } else {
+          diffs.push({ row: r, status: 'same' })
+        }
+      }
+      // Check deleted rows
+      for (const r of prev) {
+        const pk = String(r[realPkField] ?? '')
+        if (!newMap.has(pk)) {
+          diffs.push({ row: r, status: 'deleted' })
+          changes++
+        }
+      }
+
+      setDiffRows(diffs)
+      if (changes > 0) setLiveChangeCount(c => c + changes)
+      prevSnapshot.current = newRows
+      setResult(raw)
+    } catch { /* silent in live mode */ }
+  }, [activeConnection, activeTable, activeIndex, pkField, skField, chips, limit, ascending, table])
+
+  function startLiveMode() {
+    if (!result) return // must have an initial result
+    prevSnapshot.current = result.rows as Record<string, unknown>[]
+    setDiffRows((result.rows as Record<string, unknown>[]).map(r => ({ row: r, status: 'same' as const })))
+    setLiveChangeCount(0)
+    setLiveMode(true)
+    liveTimer.current = setInterval(liveQueryPoll, liveInterval * 1000)
+  }
+
+  function stopLiveMode() {
+    setLiveMode(false)
+    if (liveTimer.current) { clearInterval(liveTimer.current); liveTimer.current = null }
+    setDiffRows([])
+  }
+
+  // Cleanup live timer on unmount or table change
+  useEffect(() => {
+    return () => {
+      if (liveTimer.current) { clearInterval(liveTimer.current); liveTimer.current = null }
+    }
+  }, [activeTable])
+
+  // Re-start interval when liveInterval changes while live
+  useEffect(() => {
+    if (!liveMode) return
+    if (liveTimer.current) clearInterval(liveTimer.current)
+    liveTimer.current = setInterval(liveQueryPoll, liveInterval * 1000)
+    return () => { if (liveTimer.current) clearInterval(liveTimer.current) }
+  }, [liveInterval, liveMode, liveQueryPoll])
+
   // Pre-run cost hint (computed from current chips, no fetch needed)
   const preRunHint = useMemo(() => {
     const mode = detectOpMode(chips, pkField, !!activeIndex)
@@ -923,6 +1020,50 @@ function QueryTab({ activeConnection, activeTable, initialIndex, onUpdateSchema,
                   </button>
                 ))}
               </div>
+              {/* Live Query toggle */}
+              {!liveMode ? (
+                <div className="flex items-center gap-1">
+                  <select
+                    value={liveInterval}
+                    onChange={e => setLiveInterval(Number(e.target.value))}
+                    className="text-[10px] bg-bg-surface border border-border rounded px-1 py-0.5 text-text-muted"
+                  >
+                    <option value={2}>2s</option>
+                    <option value={5}>5s</option>
+                    <option value={10}>10s</option>
+                  </select>
+                  <button
+                    onClick={startLiveMode}
+                    disabled={!result || result.rows.length === 0}
+                    className="px-1.5 py-0.5 rounded border border-success/40 bg-success/8 text-[10px] text-success hover:bg-success/15 transition-colors font-semibold disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    ▶ Live
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1.5">
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75" />
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-success" />
+                  </span>
+                  <span className="text-[10px] text-success font-mono">{liveChangeCount} changes</span>
+                  <select
+                    value={liveInterval}
+                    onChange={e => setLiveInterval(Number(e.target.value))}
+                    className="text-[10px] bg-bg-surface border border-border rounded px-1 py-0.5 text-text-muted"
+                  >
+                    <option value={2}>2s</option>
+                    <option value={5}>5s</option>
+                    <option value={10}>10s</option>
+                  </select>
+                  <button
+                    onClick={stopLiveMode}
+                    className="px-1.5 py-0.5 rounded border border-danger/40 bg-danger/8 text-[10px] text-danger hover:bg-danger/15 transition-colors font-semibold"
+                  >
+                    ■ Stop
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -995,7 +1136,50 @@ function QueryTab({ activeConnection, activeTable, initialIndex, onUpdateSchema,
           </div>
         )}
 
-        {result && !loading && result.rows.length > 0 && viewMode === 'table' && (
+        {/* Live diff table */}
+        {liveMode && diffRows.length > 0 && viewMode === 'table' && (
+          <div className="flex-1 overflow-auto">
+            <table className="w-full text-xs font-mono">
+              <thead className="sticky top-0 bg-bg-elevated border-b border-border z-10">
+                <tr>
+                  {[...new Set(diffRows.flatMap(d => Object.keys(d.row)))].map(col => (
+                    <th key={col} className="text-left px-3 py-2 text-text-muted font-semibold whitespace-nowrap border-r border-border-subtle last:border-r-0">{col}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {diffRows.map((d, i) => {
+                  const bgClass = d.status === 'new' ? 'bg-success/10'
+                    : d.status === 'deleted' ? 'bg-danger/10'
+                    : d.status === 'changed' ? 'bg-warning/5'
+                    : ''
+                  const textClass = d.status === 'deleted' ? 'line-through text-danger/70' : ''
+                  const cols = [...new Set(diffRows.flatMap(dd => Object.keys(dd.row)))]
+                  const realPkField = table?.partitionKey ?? pkField
+                  const prevRow = d.status === 'changed'
+                    ? prevSnapshot.current.find(p => String(p[realPkField]) === String(d.row[realPkField]))
+                    : null
+                  return (
+                    <tr key={i} className={`border-b border-border-subtle ${bgClass}`}>
+                      {cols.map(col => {
+                        const val = d.row[col]
+                        const str = val === null || val === undefined ? '' : typeof val === 'object' ? JSON.stringify(val) : String(val)
+                        const isChanged = prevRow && JSON.stringify(prevRow[col]) !== JSON.stringify(val)
+                        return (
+                          <td key={col} className={`px-3 py-1.5 whitespace-nowrap max-w-[180px] overflow-hidden text-ellipsis border-r border-border-subtle last:border-r-0 ${textClass} ${isChanged ? 'bg-warning/20 text-warning font-semibold' : 'text-text-secondary'}`} title={str}>
+                            {str}
+                          </td>
+                        )
+                      })}
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {result && !loading && result.rows.length > 0 && viewMode === 'table' && !liveMode && (
           <div className="flex-1 overflow-auto">
             <table className="w-full text-xs font-mono">
               <thead className="sticky top-0 bg-bg-elevated border-b border-border z-10">
