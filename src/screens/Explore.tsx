@@ -633,6 +633,14 @@ function QueryTab({ activeConnection, activeTable, onUpdateSchema, onAddMonitorR
     setResult(null)
     setSuggestion(null)
     setQueryError(null)
+    // Guard: chips that require a value must not be empty
+    const emptyValueChips = chips.filter(c =>
+      c.op !== 'exists' && c.op !== 'not_exists' && !c.value.trim()
+    )
+    if (emptyValueChips.length > 0) {
+      setQueryError(`Field "${emptyValueChips[0].field}" needs a value`)
+      return
+    }
     if (largeScan) {
       setPendingConfirmScan(true)
       return
