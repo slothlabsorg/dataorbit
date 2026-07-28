@@ -211,6 +211,12 @@ export function LiveMonitor({ activeConnection, monitoredRows, onRemoveRow }: Li
   const [states, setStates] = useState<Map<string, RowState>>(new Map())
   const [activeTab, setActiveTab] = useState<string | null>(null)
   const intervalsRef = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map())
+  const connectionRef = useRef<DbConnection | null>(activeConnection)
+
+  // Keep connectionRef in sync
+  useEffect(() => {
+    connectionRef.current = activeConnection
+  }, [activeConnection])
 
   // Sync monitoredRows → states
   useEffect(() => {
@@ -234,9 +240,11 @@ export function LiveMonitor({ activeConnection, monitoredRows, onRemoveRow }: Li
   }, [monitoredRows]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const poll = useCallback(async (rowId: string) => {
+    const conn = connectionRef.current
+    if (!conn) return
     setStates(prev => {
       const state = prev.get(rowId)
-      if (!state || !activeConnection) return prev
+      if (!state) return prev
       const { monitor } = state
       const filters = [
         { id: 'pk', field: monitor.pkField, op: '=' as const, value: monitor.pkValue },
@@ -275,7 +283,7 @@ export function LiveMonitor({ activeConnection, monitoredRows, onRemoveRow }: Li
       })
       return prev
     })
-  }, [activeConnection])
+  }, [])
 
   // Start/stop polling when monitoredRows change
   useEffect(() => {

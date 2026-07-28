@@ -204,13 +204,31 @@ function IndexRecommendation({ s, tableName }: { s: IndexSuggestion; tableName: 
 
 // ── UI helpers ────────────────────────────────────────────────────────────────
 
-function FilterChipBadge({ chip, onRemove }: { chip: FilterChip; onRemove: () => void }) {
+function FilterChipBadge({ chip, onRemove, onChange }: {
+  chip: FilterChip
+  onRemove: () => void
+  onChange?: (value: string) => void
+}) {
+  const isEmpty = !chip.value && chip.op !== 'exists' && chip.op !== 'not_exists'
   return (
-    <div className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-primary/30 bg-primary/8 text-xs">
+    <div className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg border text-xs ${
+      isEmpty ? 'border-primary/60 bg-primary/12 ring-1 ring-primary/30' : 'border-primary/30 bg-primary/8'
+    }`}>
       <span className="text-text-secondary font-mono">{chip.field}</span>
       <span className="text-text-muted">{OP_LABELS[chip.op]}</span>
-      {chip.op !== 'exists' && chip.op !== 'not_exists' && (
-        <span className="text-text-primary font-mono">{chip.value}</span>
+      {isEmpty ? (
+        <input
+          autoFocus
+          className="bg-transparent text-text-primary font-mono outline-none w-32 placeholder:text-text-muted/60"
+          placeholder="enter value…"
+          value={chip.value}
+          onChange={e => onChange?.(e.target.value)}
+          onKeyDown={e => e.stopPropagation()}
+        />
+      ) : (
+        chip.op !== 'exists' && chip.op !== 'not_exists' && (
+          <span className="text-text-primary font-mono">{chip.value}</span>
+        )
       )}
       {chip.op === 'between' && chip.valueEnd && (
         <><span className="text-text-muted">→</span><span className="text-text-primary font-mono">{chip.valueEnd}</span></>
@@ -504,6 +522,23 @@ function QueryTab({ activeConnection, activeTable, onUpdateSchema, onAddMonitorR
   const activeIndexMeta = activeIndex ? table?.indexes?.find(i => i.name === activeIndex) : null
   const pkField  = activeIndexMeta?.partitionKey ?? table?.partitionKey ?? 'pk'
   const skField  = activeIndexMeta?.sortKey ?? table?.sortKey
+
+  // When active index changes, clear chips and pre-fill the index PK chip
+  useEffect(() => {
+    setChips([])
+    setResult(null)
+    // If an index is active, pre-add the PK chip (empty) so user knows what to fill
+    if (activeIndex && activeIndexMeta) {
+      const pkChip: FilterChip = {
+        id: `chip-${++chipId}`,
+        field: activeIndexMeta.partitionKey,
+        op: '=',
+        value: '', // empty - user must fill it
+      }
+      setChips([pkChip])
+    }
+  }, [activeIndex]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const isPkFilter = chips.some(c => c.field === pkField && c.op === '=')
   const opMode   = detectOpMode(chips, pkField, !!activeIndex)
   const rcu      = estimateRcu(opMode, table?.itemCount ?? 1000)
@@ -694,6 +729,7 @@ function QueryTab({ activeConnection, activeTable, onUpdateSchema, onAddMonitorR
         <div className="flex items-center gap-2 flex-wrap min-h-[30px]">
           {chips.map(chip => (
             <FilterChipBadge key={chip.id} chip={chip}
+              onChange={val => setChips(cs => cs.map(c => c.id === chip.id ? { ...c, value: val } : c))}
               onRemove={() => { setChips(cs => cs.filter(c => c.id !== chip.id)); setResult(null) }} />
           ))}
           {chips.length > 0 && (
@@ -872,16 +908,20 @@ function QueryTab({ activeConnection, activeTable, onUpdateSchema, onAddMonitorR
                           e.stopPropagation()
                           if (!activeConnection || !activeTable) return
                           const rowData = row as Record<string, unknown>
-                          const pkVal = rowData[pkField] != null ? String(rowData[pkField]) : ''
-                          const skVal = skField && rowData[skField] != null ? String(rowData[skField]) : undefined
+                          // Always use the REAL table PK (not the GSI field)
+                          const realPkField = table?.partitionKey ?? 'pk'
+                          const realSkField = table?.sortKey
+                          const pkVal = rowData[realPkField] != null ? String(rowData[realPkField]) : ''
+                          const skVal = realSkField && rowData[realSkField] != null ? String(rowData[realSkField]) : undefined
                           onAddMonitorRow?.({
                             id: `${activeConnection.id}:${activeTable}:${pkVal}${skVal ? ':' + skVal : ''}`,
                             connectionId: activeConnection.id,
                             tableName: activeTable,
-                            pkField,
+                            pkField: realPkField,
                             pkValue: pkVal,
-                            skField,
+                            skField: realSkField,
                             skValue: skVal,
+                            indexName: activeIndex ?? undefined,
                             region: activeConnection.awsRegion,
                           })
                         }}
@@ -1641,6 +1681,7 @@ function TraceTab({ activeConnection }: { activeConnection: DbConnection | null 
   const [result, setResult]           = useState<TraceResult | null>(null)
   const [loading, setLoading]         = useState(false)
   const [error, setError]             = useState<string | null>(null)
+  const [tableSearchInput, setTableSearchInput] = useState('')
 
   const allTables = activeConnection?.tables?.map(t => t.name) ?? []
 
@@ -1658,7 +1699,12 @@ function TraceTab({ activeConnection }: { activeConnection: DbConnection | null 
     setError(null)
   }, [activeConnection?.id])
 
-  const tablesToSearch = selectedTables.length > 0 ? selectedTables : allTables
+  const tablesToSearch = selectedTables  // Only explicitly selected tables
+
+  const searchMatchTables = allTables.filter(t =>
+    !selectedTables.includes(t) &&
+    t.toLowerCase().includes(tableSearchInput.toLowerCase())
+  ).slice(0, 10)
 
 
   function addExtraCond() {
@@ -1703,7 +1749,7 @@ function TraceTab({ activeConnection }: { activeConnection: DbConnection | null 
   }
 
   const selectedOpHint = TRACE_OPS.find(o => o.value === entityOp)?.hint ?? ''
-  const canTrace = entityValue.trim().length > 0
+  const canTrace = entityValue.trim().length > 0 && selectedTables.length > 0
   const activeTableCount = tablesToSearch.length
   const tooManyTables = activeTableCount > TRACE_TABLE_WARN_THRESHOLD
 
@@ -1814,8 +1860,14 @@ function TraceTab({ activeConnection }: { activeConnection: DbConnection | null 
           {allTables.length > 0 && (
             <div className="flex items-start gap-2 flex-wrap">
               <span className="text-[11px] text-text-muted mt-0.5">Tables:</span>
+
+              {/* No tables selected warning */}
+              {selectedTables.length === 0 && (
+                <span className="text-[11px] text-warning italic">No tables selected — add tables below to search</span>
+              )}
+
               {/* Selected table chips with × */}
-              {(selectedTables.length > 0 ? selectedTables : allTables).map((name, i) => {
+              {selectedTables.map((name, i) => {
                 const color = getTraceColor(tableColorIndex.get(name) ?? i)
                 return (
                   <span
@@ -1824,47 +1876,40 @@ function TraceTab({ activeConnection }: { activeConnection: DbConnection | null 
                   >
                     {name}
                     <button
-                      onClick={() => {
-                        if (selectedTables.length === 0) {
-                          // "all" mode → switch to explicit with this one removed
-                          setSelectedTables(allTables.filter(t => t !== name))
-                        } else {
-                          setSelectedTables(prev => prev.filter(t => t !== name))
-                        }
-                      }}
+                      onClick={() => setSelectedTables(prev => prev.filter(t => t !== name))}
                       className="opacity-60 hover:opacity-100 ml-0.5"
                       title="Remove table"
                     >×</button>
                   </span>
                 )
               })}
-              {/* + Add table dropdown */}
-              {(() => {
-                const active = selectedTables.length > 0 ? selectedTables : allTables
-                const available = allTables.filter(t => !active.includes(t))
-                if (available.length === 0) return null
-                return (
-                  <select
-                    value=""
-                    onChange={e => {
-                      if (!e.target.value) return
-                      if (selectedTables.length === 0) {
-                        // all mode — switch to explicit with new added
-                        setSelectedTables([...allTables, e.target.value])
-                      } else {
-                        setSelectedTables(prev => [...prev, e.target.value])
-                      }
-                    }}
-                    className="text-[10px] px-1.5 py-0.5 rounded-full border border-dashed border-border text-text-muted bg-transparent hover:border-primary/50 hover:text-primary transition-colors cursor-pointer outline-none"
-                  >
-                    <option value="">+ Add table</option>
-                    {available.map(t => <option key={t} value={t}>{t}</option>)}
-                  </select>
-                )
-              })()}
+
+              {/* Search + quick add */}
+              <div className="relative">
+                <input
+                  value={tableSearchInput}
+                  onChange={e => setTableSearchInput(e.target.value)}
+                  placeholder="+ Add table…"
+                  className="text-[10px] px-2 py-0.5 rounded-full border border-dashed border-border text-text-muted bg-transparent hover:border-primary/50 hover:text-primary transition-colors outline-none w-32"
+                />
+                {tableSearchInput && searchMatchTables.length > 0 && (
+                  <div className="absolute left-0 top-full mt-1 bg-bg-elevated border border-border rounded-lg shadow-xl z-20 py-1 min-w-48 max-h-40 overflow-y-auto">
+                    {searchMatchTables.map(name => (
+                      <button
+                        key={name}
+                        onClick={() => { setSelectedTables(prev => [...prev, name]); setTableSearchInput('') }}
+                        className="w-full text-left px-3 py-1.5 text-[11px] text-text-secondary hover:bg-bg-surface hover:text-text-primary"
+                      >
+                        {name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               {selectedTables.length > 0 && (
-                <button onClick={() => setSelectedTables([])} className="text-[10px] text-text-muted hover:text-primary">
-                  All
+                <button onClick={() => setSelectedTables([])} className="text-[10px] text-text-muted hover:text-danger">
+                  Clear all
                 </button>
               )}
             </div>

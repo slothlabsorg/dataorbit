@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { api } from '@/lib/tauri'
 import { downloadJson, downloadCsv } from '@/lib/export'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -282,6 +282,10 @@ export function Browse({ activeConnection, activeTable, onSelectTable, onRefresh
   const [deletingRow, setDeletingRow] = useState<Record<string, unknown> | null>(null)
   const lastKeyRef = useRef<Record<string, unknown> | undefined>(undefined)
 
+  // Client-side sort
+  const [clientSortField, setClientSortField] = useState<string | null>(null)
+  const [clientSortDir, setClientSortDir] = useState<'asc' | 'desc'>('desc')
+
   const table = activeConnection?.tables?.find(t => t.name === activeTable) ?? null
 
   // Load schema on-demand then fetch rows
@@ -392,6 +396,17 @@ export function Browse({ activeConnection, activeTable, onSelectTable, onRefresh
   const rows = result?.rows ?? []
   const hasMore = !!lastKeyRef.current
 
+  // Client-side sort applied to loaded rows
+  const sortedRows = useMemo(() => {
+    if (!clientSortField || !rows.length) return rows
+    return [...rows].sort((a, b) => {
+      const av = String((a as Record<string, unknown>)[clientSortField] ?? '')
+      const bv = String((b as Record<string, unknown>)[clientSortField] ?? '')
+      const cmp = av.localeCompare(bv)
+      return clientSortDir === 'asc' ? cmp : -cmp
+    })
+  }, [rows, clientSortField, clientSortDir])
+
   return (
     <div className="flex flex-col h-full overflow-hidden">
       <TableSelector
@@ -435,6 +450,29 @@ export function Browse({ activeConnection, activeTable, onSelectTable, onRefresh
             >
               {table.sortKey} {sortDir === 'asc' ? '↑' : '↓'}
             </button>
+          )}
+
+          {/* Client-side sort by any field */}
+          {rows.length > 0 && (
+            <div className="flex items-center gap-1 text-[11px]">
+              <span className="text-text-muted">Sort:</span>
+              <select
+                value={clientSortField ?? ''}
+                onChange={e => setClientSortField(e.target.value || null)}
+                className="bg-bg-surface border border-border rounded px-1.5 py-0.5 text-text-secondary text-[11px] outline-none"
+              >
+                <option value="">(none)</option>
+                {Object.keys((rows[0] as Record<string, unknown>) ?? {}).map(col => (
+                  <option key={col} value={col}>{col}</option>
+                ))}
+              </select>
+              {clientSortField && (
+                <button onClick={() => setClientSortDir(d => d === 'asc' ? 'desc' : 'asc')}
+                  className="text-text-muted hover:text-primary">
+                  {clientSortDir === 'asc' ? '↑' : '↓'}
+                </button>
+              )}
+            </div>
           )}
 
           <div className="flex items-center gap-1 bg-bg-surface rounded-lg p-0.5">
@@ -489,7 +527,7 @@ export function Browse({ activeConnection, activeTable, onSelectTable, onRefresh
             </div>
           ) : viewMode === 'json' ? (
             <div className="flex-1 overflow-y-auto p-4 space-y-2">
-              {rows.map((row, i) => (
+              {sortedRows.map((row, i) => (
                 <div key={i} className="rounded-lg border border-border bg-bg-surface p-3">
                   <JsonTree data={row as Record<string, unknown>} defaultExpanded={false} />
                 </div>
@@ -509,7 +547,7 @@ export function Browse({ activeConnection, activeTable, onSelectTable, onRefresh
                     </tr>
                   </thead>
                   <tbody>
-                    {rows.map((row, i) => (
+                    {sortedRows.map((row, i) => (
                       <tr
                         key={i}
                         onClick={() => { setSelectedRow(selectedRow === i ? null : i); setEditingRow(null) }}
@@ -544,7 +582,7 @@ export function Browse({ activeConnection, activeTable, onSelectTable, onRefresh
 
         {/* Row detail / edit panel */}
         <AnimatePresence>
-          {selectedRow !== null && !editingRow && rows[selectedRow] && (
+          {selectedRow !== null && !editingRow && sortedRows[selectedRow] && (
             <motion.div
               initial={{ width: 0, opacity: 0 }}
               animate={{ width: 300, opacity: 1 }}
@@ -557,7 +595,7 @@ export function Browse({ activeConnection, activeTable, onSelectTable, onRefresh
                   <span className="text-text-secondary text-xs font-semibold">Row {selectedRow + 1}</span>
                   <div className="flex items-center gap-2">
                     <button
-                      onClick={() => setEditingRow(rows[selectedRow] as Record<string, unknown>)}
+                      onClick={() => setEditingRow(sortedRows[selectedRow] as Record<string, unknown>)}
                       className="text-[10px] px-1.5 py-0.5 rounded border border-border text-text-muted hover:border-primary/40 hover:text-primary transition-colors"
                     >
                       Edit
@@ -565,7 +603,7 @@ export function Browse({ activeConnection, activeTable, onSelectTable, onRefresh
                     <button
                       onClick={() => {
                         if (!activeConnection || !activeTable || !table) return
-                        const rowData = rows[selectedRow] as Record<string, unknown>
+                        const rowData = sortedRows[selectedRow] as Record<string, unknown>
                         const pkField = table.partitionKey ?? ''
                         const skField = table.sortKey
                         const pkValue = rowData[pkField] != null ? String(rowData[pkField]) : ''
@@ -587,7 +625,7 @@ export function Browse({ activeConnection, activeTable, onSelectTable, onRefresh
                       👁 Live
                     </button>
                     <button
-                      onClick={() => setDeletingRow(rows[selectedRow] as Record<string, unknown>)}
+                      onClick={() => setDeletingRow(sortedRows[selectedRow] as Record<string, unknown>)}
                       className="text-[10px] px-1.5 py-0.5 rounded border border-danger/30 text-danger/70 hover:bg-danger/10 transition-colors"
                     >
                       Delete
@@ -596,7 +634,7 @@ export function Browse({ activeConnection, activeTable, onSelectTable, onRefresh
                   </div>
                 </div>
                 <div className="flex-1 overflow-y-auto p-3">
-                  <JsonTree data={rows[selectedRow] as Record<string, unknown>} defaultExpanded={true} />
+                  <JsonTree data={sortedRows[selectedRow] as Record<string, unknown>} defaultExpanded={true} />
                 </div>
               </div>
             </motion.div>
