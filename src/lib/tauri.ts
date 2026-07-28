@@ -71,4 +71,13 @@ export const api = {
       window.open(url, '_blank')
     }
   },
+
+  executePartiQL: (connectionId: string, statement: string, limit?: number) =>
+    invoke<{
+      rows: Record<string, unknown>[]
+      count: number
+      executionMs: number
+      warnings: string[]
+      opHint: string
+    }>('execute_partiql', { connectionId, statement, limit: limit ?? null }),
 }

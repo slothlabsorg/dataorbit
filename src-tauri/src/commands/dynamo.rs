@@ -558,6 +558,94 @@ pub async fn stop_stream(connection_id: String) -> Result<(), String> {
     Ok(())
 }
 
+// ── PartiQL execute ───────────────────────────────────────────────────────────
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PartiQLResult {
+    pub rows:         Vec<serde_json::Value>,
+    pub count:        usize,
+    pub execution_ms: u128,
+    pub warnings:     Vec<String>,
+    /// The underlying DynamoDB operation that was executed (Query/Scan/Put/Update/Delete)
+    pub op_hint:      String,
+}
+
+/// Execute a PartiQL statement against DynamoDB via ExecuteStatement.
+/// Returns rows for SELECT, empty rows for mutating statements.
+/// The frontend linter should warn before sending dangerous statements (full scans),
+/// but this command executes whatever is given.
+#[tauri::command]
+pub async fn execute_partiql(
+    connection_id: String,
+    statement:     String,
+    limit:         Option<i32>,
+) -> Result<PartiQLResult, String> {
+    let store = load_store();
+    let conn = store.connections.iter()
+        .find(|c| c.id == connection_id)
+        .ok_or_else(|| format!("Connection {} not found", connection_id))?
+        .clone();
+
+    let client = build_dynamo_client(&conn).await.map_err(|e| e.to_string())?;
+    let start  = std::time::Instant::now();
+
+    let mut warnings: Vec<String> = Vec::new();
+
+    // Detect likely full scans to surface as warnings in the result
+    let stmt_upper = statement.trim().to_uppercase();
+    let is_select  = stmt_upper.starts_with("SELECT");
+    let has_where  = stmt_upper.contains("WHERE");
+    let has_limit  = stmt_upper.contains("LIMIT");
+
+    if is_select && !has_where {
+        warnings.push("No WHERE clause — this will perform a full table scan (high RCU cost).".into());
+    }
+    if is_select && !has_limit && limit.is_none() {
+        warnings.push("No LIMIT specified — results may be very large.".into());
+    }
+
+    // Determine op hint from statement shape
+    let op_hint = if stmt_upper.starts_with("SELECT") { "SELECT" }
+        else if stmt_upper.starts_with("INSERT") { "INSERT" }
+        else if stmt_upper.starts_with("UPDATE") { "UPDATE" }
+        else if stmt_upper.starts_with("DELETE") { "DELETE" }
+        else { "UNKNOWN" }.to_string();
+
+    // Build and send the ExecuteStatement request
+    // Note: LIMIT in ExecuteStatement is supported on real AWS DynamoDB but
+    // not in DynamoDB Local. We pass limit only when it's in the statement itself.
+    let req = client.execute_statement()
+        .statement(&statement);
+
+    let resp = req.send().await.map_err(|e| {
+        // Provide friendlier error messages for common cases
+        let msg = e.to_string();
+        if msg.contains("ResourceNotFoundException") {
+            "Table not found. Check the table name in the query.".to_string()
+        } else if msg.contains("ValidationException") {
+            format!("Invalid statement: {}", msg)
+        } else if msg.contains("AccessDeniedException") {
+            "Access denied. Your AWS profile may not have permission for this operation.".to_string()
+        } else {
+            msg
+        }
+    })?;
+
+    let rows: Vec<serde_json::Value> = resp.items()
+        .iter()
+        .map(|item| item_to_json(item))
+        .collect();
+
+    Ok(PartiQLResult {
+        count: rows.len(),
+        rows,
+        execution_ms: start.elapsed().as_millis(),
+        warnings,
+        op_hint,
+    })
+}
+
 // ── Unit tests ────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

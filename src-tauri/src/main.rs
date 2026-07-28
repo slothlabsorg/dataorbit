@@ -35,6 +35,7 @@ fn main() {
             dynamo::delete_item,
             dynamo::start_stream,
             dynamo::stop_stream,
+            dynamo::execute_partiql,
             profiles::list_aws_profiles,
             profiles::list_aws_profiles_rich,
         ])

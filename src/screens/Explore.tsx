@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import type { DbConnection, FilterChip, FilterOp, QueryResult, QueryDef, JoinType, JoinResult, JoinResultRow, TraceCondition, TraceMatch, TraceResult, TraceOp } from '@/types'
 import type { MonitoredRow } from '@/screens/LiveMonitor'
 import { EmptyState } from '@/components/ui/EmptyState'
@@ -10,6 +10,7 @@ import { mockRows, mockRegistryRows, mockAlertRows, mockLocationRows } from '@/m
 import { api } from '@/lib/tauri'
 import { downloadJson, downloadCsv } from '@/lib/export'
 import { generateCli, generateTypeScript, generatePython, generatePartiQL } from '@/lib/codegen'
+import { lintPartiQL, getSuggestions, type Diagnostic, type Suggestion } from '@/lib/partiql-linter'
 
 const MOCK_MODE = (() => {
   try { return new URL(window.location.href).searchParams.get('mock') === '1' } catch { return false }
@@ -1981,8 +1982,388 @@ function TraceTab({ activeConnection }: { activeConnection: DbConnection | null 
 
 // ── Explore root ──────────────────────────────────────────────────────────────
 
+// ── PartiQL Editor Tab ────────────────────────────────────────────────────────
+
+const SAVED_PARTIQL_KEY = 'dataorbit.savedPartiQL'
+
+interface SavedPartiQL {
+  id: string
+  name: string
+  statement: string
+  connectionId: string
+  savedAt: string
+}
+
+function loadSavedPartiQL(): SavedPartiQL[] {
+  try { return JSON.parse(localStorage.getItem(SAVED_PARTIQL_KEY) ?? '[]') } catch { return [] }
+}
+
+function saveSavedPartiQL(list: SavedPartiQL[]): void {
+  try { localStorage.setItem(SAVED_PARTIQL_KEY, JSON.stringify(list)) } catch {}
+}
+
+const DIAG_COLORS: Record<Diagnostic['level'], string> = {
+  error:   'text-danger bg-danger/8 border-danger/30',
+  warning: 'text-warning bg-warning/8 border-warning/30',
+  info:    'text-primary bg-primary/8 border-primary/20',
+}
+const DIAG_ICONS: Record<Diagnostic['level'], string> = {
+  error: '✕', warning: '⚠', info: 'ℹ',
+}
+
+function PartiQLTab({
+  activeConnection,
+  onAddMonitorRow,
+}: {
+  activeConnection: DbConnection | null
+  onAddMonitorRow?: (row: MonitoredRow) => void
+}) {
+  const [statement, setStatement]   = useState('')
+  const [result, setResult]         = useState<{ rows: Record<string,unknown>[]; count: number; executionMs: number; warnings: string[]; opHint: string } | null>(null)
+  const [loading, setLoading]       = useState(false)
+  const [error, setError]           = useState<string | null>(null)
+  const [limit, setLimit]           = useState(50)
+  const [viewMode, setViewMode]     = useState<'table' | 'json'>('table')
+  const [savedList, setSavedList]   = useState<SavedPartiQL[]>(loadSavedPartiQL)
+  const [showSaved, setShowSaved]   = useState(false)
+  const [saveName, setSaveName]     = useState('')
+  const [showSaveInput, setShowSaveInput] = useState(false)
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([])
+  const [suggOpen, setSuggOpen]     = useState(false)
+  const [suggIdx, setSuggIdx]       = useState(0)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const [cursorPos, setCursorPos]   = useState(0)
+
+  const tables      = activeConnection?.tables ?? []
+  const tableNames  = tables.map(t => t.name)
+
+  // Live lint
+  const diagnostics = useMemo(
+    () => lintPartiQL(statement, tables, tableNames),
+    [statement, tables, tableNames]
+  )
+
+  const hasErrors   = diagnostics.some(d => d.level === 'error')
+  const hasCritical = hasErrors && diagnostics.some(d => d.level === 'error' && d.message.includes('scan'))
+
+  // Update suggestions when cursor moves
+  useEffect(() => {
+    if (!statement.trim() || !activeConnection) { setSuggOpen(false); return }
+    const s = getSuggestions(statement, cursorPos, tables, tableNames)
+    setSuggestions(s)
+    setSuggOpen(s.length > 0)
+    setSuggIdx(0)
+  }, [statement, cursorPos])
+
+  const applySuggestion = useCallback((s: Suggestion) => {
+    const before = statement.slice(0, cursorPos)
+    const after  = statement.slice(cursorPos)
+    const lastWord = before.match(/\S+$/)?.[0] ?? ''
+    const newBefore = before.slice(0, before.length - lastWord.length) + s.insertText
+    setStatement(newBefore + after)
+    setSuggOpen(false)
+    setTimeout(() => textareaRef.current?.focus(), 0)
+  }, [statement, cursorPos])
+
+  async function handleRun() {
+    if (!activeConnection || !statement.trim()) return
+    if (hasErrors && !hasCritical) {
+      // Errors that are not scans we still allow (user override)
+    }
+    if (hasCritical) {
+      if (!window.confirm('This query will perform a full table scan which may be very expensive. Continue?')) return
+    }
+    setLoading(true); setError(null); setResult(null)
+    try {
+      const r = await api.executePartiQL(activeConnection.id, statement.trim(), limit)
+      setResult(r)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  function handleSave() {
+    if (!saveName.trim() || !activeConnection) return
+    const item: SavedPartiQL = {
+      id: `pq-${Date.now()}`,
+      name: saveName.trim(),
+      statement,
+      connectionId: activeConnection.id,
+      savedAt: new Date().toISOString(),
+    }
+    const next = [item, ...savedList]
+    setSavedList(next)
+    saveSavedPartiQL(next)
+    setSaveName('')
+    setShowSaveInput(false)
+  }
+
+  function handleDelete(id: string) {
+    const next = savedList.filter(s => s.id !== id)
+    setSavedList(next)
+    saveSavedPartiQL(next)
+  }
+
+  function handleLoad(item: SavedPartiQL) {
+    setStatement(item.statement)
+    setShowSaved(false)
+    setResult(null)
+  }
+
+  const allCols = useMemo(
+    () => result ? [...new Set(result.rows.flatMap(r => Object.keys(r)))] : [],
+    [result]
+  )
+
+  if (!activeConnection) {
+    return (
+      <div className="h-full flex items-center justify-center">
+        <EmptyState variant="empty" title="No connection selected"
+          description="Select a DynamoDB connection to write PartiQL statements." />
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex h-full overflow-hidden">
+      {/* Saved queries sidebar */}
+      {showSaved && (
+        <div className="w-64 flex-shrink-0 border-r border-border bg-bg-elevated flex flex-col overflow-hidden">
+          <div className="px-3 py-2 border-b border-border-subtle flex items-center justify-between">
+            <span className="text-xs font-semibold text-text-primary">Saved queries</span>
+            <button onClick={() => setShowSaved(false)} className="text-text-muted hover:text-text-primary text-xs">✕</button>
+          </div>
+          <div className="flex-1 overflow-y-auto">
+            {savedList.length === 0 ? (
+              <p className="text-[11px] text-text-muted p-3 italic">No saved queries yet.<br/>Click ★ Save to save the current query.</p>
+            ) : savedList.map(item => (
+              <div key={item.id} className="group px-3 py-2 border-b border-border-subtle hover:bg-bg-surface">
+                <button onClick={() => handleLoad(item)} className="w-full text-left">
+                  <p className="text-[11px] font-semibold text-text-primary truncate">{item.name}</p>
+                  <p className="text-[10px] text-text-muted font-mono truncate mt-0.5">{item.statement.slice(0, 60)}</p>
+                </button>
+                <button
+                  onClick={() => handleDelete(item.id)}
+                  className="opacity-0 group-hover:opacity-100 text-[10px] text-danger hover:text-danger/80 mt-1 transition-opacity"
+                >Delete</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Main editor area */}
+      <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
+        {/* Toolbar */}
+        <div className="flex items-center gap-2 px-4 py-2 border-b border-border-subtle bg-bg-elevated flex-shrink-0 flex-wrap">
+          <Button variant="primary" size="sm" onClick={handleRun} disabled={loading || !statement.trim()}>
+            {loading ? 'Running…' : '▶ Run'}
+          </Button>
+          <div className="flex items-center gap-1">
+            <span className="text-text-muted text-[11px]">Limit:</span>
+            <select value={limit} onChange={e => setLimit(Number(e.target.value))}
+              className="bg-bg-surface border border-border rounded px-1.5 py-0.5 text-[11px] text-text-secondary outline-none">
+              {[10, 25, 50, 100, 500].map(n => <option key={n} value={n}>{n}</option>)}
+            </select>
+          </div>
+          <button
+            onClick={() => setShowSaved(s => !s)}
+            className={`px-2 py-1 rounded text-[11px] border transition-colors ${showSaved ? 'border-primary/40 text-primary bg-primary/8' : 'border-border text-text-muted hover:text-text-primary'}`}
+          >
+            ☰ Saved{savedList.length > 0 && ` (${savedList.length})`}
+          </button>
+          {!showSaveInput ? (
+            <button
+              onClick={() => setShowSaveInput(true)}
+              disabled={!statement.trim()}
+              className="px-2 py-1 rounded text-[11px] border border-border text-text-muted hover:text-warning hover:border-warning/40 transition-colors disabled:opacity-40"
+            >★ Save</button>
+          ) : (
+            <div className="flex items-center gap-1">
+              <input autoFocus value={saveName} onChange={e => setSaveName(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') handleSave(); if (e.key === 'Escape') setShowSaveInput(false) }}
+                placeholder="Query name…"
+                className="bg-bg-surface border border-primary/40 rounded px-2 py-0.5 text-[11px] outline-none w-36"
+              />
+              <button onClick={handleSave} disabled={!saveName.trim()} className="text-[11px] text-primary hover:text-primary/80 disabled:opacity-40">Save</button>
+              <button onClick={() => setShowSaveInput(false)} className="text-[11px] text-text-muted hover:text-text-primary">✕</button>
+            </div>
+          )}
+          {result && (
+            <span className="ml-auto text-[11px] text-text-muted font-mono">
+              {result.count} rows · {result.executionMs}ms · {result.opHint}
+            </span>
+          )}
+        </div>
+
+        {/* Editor */}
+        <div className="relative border-b border-border-subtle flex-shrink-0" style={{ minHeight: 120, maxHeight: 220 }}>
+          <textarea
+            ref={textareaRef}
+            value={statement}
+            onChange={e => { setStatement(e.target.value); setCursorPos(e.target.selectionStart) }}
+            onKeyUp={e => setCursorPos((e.target as HTMLTextAreaElement).selectionStart)}
+            onClick={e => setCursorPos((e.target as HTMLTextAreaElement).selectionStart)}
+            onKeyDown={e => {
+              if (suggOpen && (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter' || e.key === 'Tab')) {
+                e.preventDefault()
+                if (e.key === 'ArrowDown') setSuggIdx(i => Math.min(i + 1, suggestions.length - 1))
+                else if (e.key === 'ArrowUp') setSuggIdx(i => Math.max(i - 1, 0))
+                else if (e.key === 'Enter' || e.key === 'Tab') applySuggestion(suggestions[suggIdx])
+              } else if (e.key === 'Escape') {
+                setSuggOpen(false)
+              }
+            }}
+            spellCheck={false}
+            placeholder={`SELECT * FROM "your-table" WHERE pk = 'value' LIMIT 50\n\n-- PartiQL for DynamoDB: SELECT, INSERT, UPDATE, DELETE\n-- Type FROM " to autocomplete table names`}
+            className="w-full h-full p-3 bg-bg-base text-text-primary font-mono text-[12px] leading-relaxed resize-none outline-none"
+            style={{ minHeight: 120, maxHeight: 220 }}
+          />
+          {/* Autocomplete dropdown */}
+          {suggOpen && suggestions.length > 0 && (
+            <div className="absolute left-3 bg-bg-elevated border border-border rounded-lg shadow-xl z-30 py-1 min-w-56 max-h-48 overflow-y-auto"
+              style={{ top: '100%', marginTop: 2 }}>
+              {suggestions.map((s, i) => (
+                <button key={s.label} onClick={() => applySuggestion(s)}
+                  className={`w-full text-left px-3 py-1.5 text-[11px] flex items-center gap-2 transition-colors ${i === suggIdx ? 'bg-primary/10 text-primary' : 'text-text-secondary hover:bg-bg-surface'}`}>
+                  <span className={`text-[9px] font-bold w-12 flex-shrink-0 ${
+                    s.kind === 'keyword' ? 'text-warning' :
+                    s.kind === 'table'   ? 'text-success' :
+                    s.kind === 'field'   ? 'text-primary' :
+                    s.kind === 'function'? 'text-violet-400' : 'text-text-muted'
+                  }`}>{s.kind.toUpperCase()}</span>
+                  <span className="flex-1 font-mono">{s.label}</span>
+                  {s.detail && <span className="text-[10px] text-text-muted truncate max-w-24">{s.detail}</span>}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Diagnostics */}
+        {diagnostics.length > 0 && (
+          <div className="flex-shrink-0 border-b border-border-subtle max-h-32 overflow-y-auto">
+            {diagnostics.map((d, i) => (
+              <div key={i} className={`flex items-start gap-2 px-3 py-1.5 border-b border-border-subtle/50 last:border-0 text-[11px] ${DIAG_COLORS[d.level]}`}>
+                <span className="flex-shrink-0 font-bold w-4">{DIAG_ICONS[d.level]}</span>
+                <div className="flex-1 min-w-0">
+                  <span>{d.message}</span>
+                  {d.hint && <span className="text-text-muted ml-2 italic">{d.hint}</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Results */}
+        <div className="flex-1 overflow-hidden flex flex-col">
+          {error && (
+            <div className="mx-4 mt-3 rounded-xl border border-danger/30 bg-danger/5 p-3 text-xs text-danger flex-shrink-0">
+              <span className="font-semibold">Error: </span>{error}
+            </div>
+          )}
+
+          {result && (
+            <div className="flex items-center gap-3 px-4 py-1.5 border-b border-border-subtle bg-bg-base/50 text-[11px] text-text-muted flex-shrink-0">
+              <span><strong className="text-text-primary">{result.count}</strong> rows returned</span>
+              <span className="font-mono">{result.executionMs}ms</span>
+              <span className="text-text-muted">{result.opHint}</span>
+              {result.warnings.map((w, i) => (
+                <span key={i} className="text-warning">⚠ {w}</span>
+              ))}
+              <div className="ml-auto flex items-center gap-1">
+                {result.rows.length > 0 && (
+                  <>
+                    <button onClick={() => downloadJson(result.rows, 'partiql-result.json')}
+                      className="px-1.5 py-0.5 rounded border border-border text-[10px] text-text-muted hover:border-primary/40 hover:text-primary transition-colors">JSON ↓</button>
+                    <button onClick={() => downloadCsv(result.rows, 'partiql-result.csv')}
+                      className="px-1.5 py-0.5 rounded border border-border text-[10px] text-text-muted hover:border-primary/40 hover:text-primary transition-colors">CSV ↓</button>
+                  </>
+                )}
+                <div className="flex items-center gap-1 bg-bg-surface rounded-lg p-0.5 ml-1">
+                  {(['table', 'json'] as const).map(m => (
+                    <button key={m} onClick={() => setViewMode(m)}
+                      className={`px-2 py-0.5 rounded text-xs transition-colors ${viewMode === m ? 'bg-bg-overlay text-text-primary' : 'text-text-muted hover:text-text-secondary'}`}>
+                      {m}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {loading && (
+            <div className="flex-1 flex items-center justify-center">
+              <div className="w-6 h-6 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+            </div>
+          )}
+
+          {!result && !loading && !error && (
+            <div className="flex-1 flex items-center justify-center">
+              <div className="text-center text-text-muted max-w-xs">
+                <p className="text-2xl mb-2 opacity-30">⚡</p>
+                <p className="text-sm font-medium text-text-secondary mb-1">PartiQL Editor</p>
+                <p className="text-xs leading-relaxed">Write SQL-style queries for DynamoDB. Type <code className="text-primary bg-primary/10 px-1 rounded">FROM "</code> to autocomplete table names. Linting runs as you type.</p>
+              </div>
+            </div>
+          )}
+
+          {result && !loading && result.rows.length === 0 && (
+            <div className="flex-1 flex items-center justify-center">
+              <p className="text-text-muted text-sm">No items matched</p>
+            </div>
+          )}
+
+          {result && !loading && result.rows.length > 0 && viewMode === 'table' && (
+            <div className="flex-1 overflow-auto">
+              <table className="w-full text-xs font-mono">
+                <thead className="sticky top-0 bg-bg-elevated border-b border-border z-10">
+                  <tr>
+                    {allCols.map(col => (
+                      <th key={col} className="text-left px-3 py-2 text-text-muted font-semibold whitespace-nowrap border-r border-border-subtle last:border-r-0">{col}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.rows.map((row, i) => (
+                    <tr key={i} className="border-b border-border-subtle hover:bg-bg-surface cursor-pointer">
+                      {allCols.map(col => {
+                        const val = row[col]
+                        const str = val === null || val === undefined ? '' : typeof val === 'object' ? JSON.stringify(val) : String(val)
+                        return (
+                          <td key={col} title={str}
+                            onDoubleClick={() => { navigator.clipboard.writeText(str).catch(() => {}) }}
+                            className="px-3 py-1.5 text-text-secondary whitespace-nowrap max-w-[200px] overflow-hidden text-ellipsis border-r border-border-subtle last:border-r-0">
+                            {str}
+                          </td>
+                        )
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {result && !loading && result.rows.length > 0 && viewMode === 'json' && (
+            <div className="flex-1 overflow-auto p-4 space-y-2">
+              {result.rows.map((row, i) => (
+                <div key={i} className="rounded-lg border border-border bg-bg-surface p-3">
+                  <JsonTree data={row} defaultExpanded={false} />
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export function Explore({ activeConnection, activeTable, initialIndex, onUpdateSchema, onAddMonitorRow }: ExploreProps) {
-  const [tab, setTab] = useState<'query' | 'join' | 'trace'>('query')
+  const [tab, setTab] = useState<'query' | 'join' | 'trace' | 'partiql'>('query')
 
   if (!activeConnection && tab === 'query' && !activeTable) {
     return (
@@ -1997,9 +2378,10 @@ export function Explore({ activeConnection, activeTable, initialIndex, onUpdateS
     <div className="flex flex-col h-full overflow-hidden">
       <div className="flex items-center gap-1 px-4 pt-3 pb-0 border-b border-border-subtle bg-bg-elevated flex-shrink-0">
         {([
-          { id: 'query', label: 'Query',       badge: null    },
-          { id: 'join',  label: 'Cross-join',  badge: null    },
-          { id: 'trace', label: 'Entity History',  badge: 'new'   },
+          { id: 'query',   label: 'Query',          badge: null    },
+          { id: 'join',    label: 'Cross-join',      badge: null    },
+          { id: 'trace',   label: 'Entity History',  badge: null    },
+          { id: 'partiql', label: 'PartiQL',         badge: 'new'   },
         ] as const).map(t => (
           <button key={t.id} onClick={() => setTab(t.id)}
             className={`px-3 py-2 text-xs font-medium border-b-2 transition-colors -mb-px ${
@@ -2023,6 +2405,7 @@ export function Explore({ activeConnection, activeTable, initialIndex, onUpdateS
           </div>
         )}
         {tab === 'trace' && <TraceTab activeConnection={activeConnection} />}
+        {tab === 'partiql' && <PartiQLTab activeConnection={activeConnection} onAddMonitorRow={onAddMonitorRow} />}
       </div>
     </div>
   )
