@@ -404,13 +404,42 @@ export function Orbit({ connections, connErrors, onSelectConnection, onSelectTab
   const totalTables = connections.reduce((a, c) => a + (c.tables?.length ?? 0), 0)
   const totalItems  = connections.reduce((a, c) => a + (c.tables?.reduce((b, t) => b + (t.itemCount ?? 0), 0) ?? 0), 0)
 
+  // ── Table favorites (localStorage-backed) ──────────────────────────────────
+  const [tableFavorites, setTableFavorites] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem('dataorbit.tableFavorites')
+      return new Set(raw ? JSON.parse(raw) : [])
+    } catch { return new Set() }
+  })
+
+  function toggleTableFavorite(connId: string, tableName: string) {
+    const key = `${connId}:${tableName}`
+    setTableFavorites(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      try { localStorage.setItem('dataorbit.tableFavorites', JSON.stringify([...next])) } catch {}
+      return next
+    })
+  }
+
   const displayConns = connections.filter(c => c.isFavorite).length > 0
     ? connections.filter(c => c.isFavorite)
     : connections
 
-  const quickTables = connections.flatMap(c =>
-    (c.tables ?? []).map(t => ({ conn: c, table: t }))
-  ).slice(0, 8)
+  // Favorited tables (across all connections)
+  const favoriteTables = connections.flatMap(c =>
+    (c.tables ?? []).filter(t => tableFavorites.has(`${c.id}:${t.name}`))
+    .map(t => ({ conn: c, table: t, isFavorite: true as const }))
+  )
+
+  // Non-favorite tables (fill remaining up to 6)
+  const otherTables = connections.flatMap(c =>
+    (c.tables ?? []).filter(t => !tableFavorites.has(`${c.id}:${t.name}`))
+    .map(t => ({ conn: c, table: t, isFavorite: false as const }))
+  ).slice(0, Math.max(0, 8 - favoriteTables.length))
+
+  const quickTables = [...favoriteTables, ...otherTables]
 
   const existingProfiles = new Set(connections.map(c => c.awsProfile).filter(Boolean) as string[])
 
@@ -489,17 +518,28 @@ export function Orbit({ connections, connErrors, onSelectConnection, onSelectTab
           <div>
             <h2 className="text-text-primary font-display font-bold text-sm mb-3">Tables</h2>
             <div className="bg-bg-elevated border border-border rounded-xl overflow-hidden">
-              {quickTables.map(({ conn, table }, i) => (
+              {quickTables.map((item, i) => (
                 <button
-                  key={`${conn.id}-${table.name}`}
-                  onClick={() => { onSelectTable(conn.id, table.name); onNavigate('browse') }}
+                  key={`${item.conn.id}-${item.table.name}`}
+                  onClick={() => { onSelectTable(item.conn.id, item.table.name); onNavigate('browse') }}
                   className={`flex items-center gap-2 w-full px-4 py-2.5 hover:bg-bg-surface transition-colors text-left group ${i > 0 ? 'border-t border-border-subtle' : ''}`}
                 >
                   <svg className="w-3 h-3 text-text-muted flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/>
                   </svg>
-                  <span className="font-mono text-xs text-text-secondary group-hover:text-text-primary transition-colors truncate">{table.name}</span>
-                  <span className="ml-auto text-[10px] text-text-muted flex-shrink-0">{conn.name}</span>
+                  <span className="font-mono text-xs text-text-secondary group-hover:text-text-primary transition-colors truncate">{item.table.name}</span>
+                  <span className="ml-auto text-[10px] text-text-muted flex-shrink-0 mr-2">{item.conn.name}</span>
+                  <button
+                    onClick={e => { e.stopPropagation(); toggleTableFavorite(item.conn.id, item.table.name) }}
+                    className={`flex-shrink-0 p-0.5 rounded transition-colors ${
+                      item.isFavorite ? 'text-warning' : 'text-text-muted hover:text-warning opacity-0 group-hover:opacity-100'
+                    }`}
+                    title={item.isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+                  >
+                    <svg className="w-3 h-3" viewBox="0 0 24 24" fill={item.isFavorite ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2">
+                      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+                    </svg>
+                  </button>
                 </button>
               ))}
             </div>

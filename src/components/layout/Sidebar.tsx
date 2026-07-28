@@ -119,9 +119,36 @@ function ConnectionItem({
   const [open, setOpen] = useState(isActive)
   const [tableSearch, setTableSearch] = useState('')
   const hasTables = (conn.tables?.length ?? 0) > 0
-  const filteredTables = tableSearch.trim()
+
+  // Read table favorites from localStorage
+  const tableFavorites: Set<string> = (() => {
+    try {
+      const raw = localStorage.getItem('dataorbit.tableFavorites')
+      return new Set(raw ? JSON.parse(raw) : [])
+    } catch { return new Set<string>() }
+  })()
+
+  function toggleTableFavorite(e: React.MouseEvent, tableName: string) {
+    e.stopPropagation()
+    const key = `${conn.id}:${tableName}`
+    const next = new Set(tableFavorites)
+    if (next.has(key)) next.delete(key)
+    else next.add(key)
+    try { localStorage.setItem('dataorbit.tableFavorites', JSON.stringify([...next])) } catch {}
+    // Force re-render by toggling a dummy state
+    setTableSearch(s => s)
+  }
+
+  const rawFiltered = tableSearch.trim()
     ? (conn.tables ?? []).filter(t => t.name.toLowerCase().includes(tableSearch.toLowerCase()))
     : (conn.tables ?? [])
+
+  // Sort: favorites first
+  const filteredTables = [...rawFiltered].sort((a, b) => {
+    const aFav = tableFavorites.has(`${conn.id}:${a.name}`) ? 0 : 1
+    const bFav = tableFavorites.has(`${conn.id}:${b.name}`) ? 0 : 1
+    return aFav - bFav
+  })
 
   return (
     <div className="group/conn">
@@ -190,7 +217,7 @@ function ConnectionItem({
                     key={t.name}
                     title={t.name}
                     onClick={() => onSelectTable(t.name)}
-                    className={`flex items-center gap-1.5 w-full px-2 py-1 rounded transition-colors text-left ${
+                    className={`flex items-center gap-1.5 w-full px-2 py-1 rounded transition-colors text-left group/tbl ${
                       activeTable === t.name && isActive
                         ? 'bg-primary/8 text-primary'
                         : 'text-text-muted hover:text-text-secondary hover:bg-bg-surface'
@@ -201,6 +228,17 @@ function ConnectionItem({
                     {t.streamEnabled && (
                       <span className="ml-auto w-1 h-1 rounded-full bg-success flex-shrink-0" title="Streams enabled" />
                     )}
+                    <button
+                      onClick={e => toggleTableFavorite(e, t.name)}
+                      className={`flex-shrink-0 p-0.5 rounded transition-colors ml-auto ${
+                        tableFavorites.has(`${conn.id}:${t.name}`) ? 'text-warning' : 'text-text-muted hover:text-warning opacity-0 group-hover/tbl:opacity-100'
+                      }`}
+                      title={tableFavorites.has(`${conn.id}:${t.name}`) ? 'Remove from favorites' : 'Add to favorites'}
+                    >
+                      <svg className="w-2.5 h-2.5" viewBox="0 0 24 24" fill={tableFavorites.has(`${conn.id}:${t.name}`) ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2">
+                        <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+                      </svg>
+                    </button>
                   </button>
                 ))}
                 {filteredTables.length === 0 && tableSearch && (
@@ -306,7 +344,7 @@ export function Sidebar({
   onSelectConnection, onSelectTable, onAddConnection, onDeleteConnection,
   newsUnread = 0, monitorCount = 0,
 }: SidebarProps) {
-  const w = collapsed ? 48 : 200
+  const w = collapsed ? 48 : '100%'
 
   return (
     <motion.div
