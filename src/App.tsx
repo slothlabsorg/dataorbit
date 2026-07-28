@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
-import type { Screen, DbConnection, TableMeta } from '@/types'
+import type { Screen, DbConnection, TableMeta, HistoryEntry } from '@/types'
 import { api } from '@/lib/tauri'
 import { useConnectionHealth } from '@/hooks/useConnectionHealth'
 import { mockConnections } from '@/mock/data'
@@ -69,6 +69,53 @@ export default function App() {
   const { toasts, show: showToast, dismiss: dismissToast } = useToast()
   const [monitoredRows, setMonitoredRows] = useState<MonitoredRow[]>([])
   const pendingExploreIndexRef = useRef<string | null>(null)
+  const pendingHistoryRerunRef = useRef<HistoryEntry | null>(null)
+
+  // ── Query History persistence ───────────────────────────────────────────────
+  const HISTORY_KEY = 'dataorbit.queryHistory'
+
+  const [queryHistory, setQueryHistory] = useState<HistoryEntry[]>(() => {
+    try {
+      const raw = localStorage.getItem(HISTORY_KEY)
+      if (!raw) return []
+      const parsed = JSON.parse(raw)
+      return parsed.map((e: HistoryEntry) => ({ ...e, time: new Date(e.time) }))
+    } catch { return [] }
+  })
+
+  function addHistoryEntry(entry: HistoryEntry) {
+    setQueryHistory(prev => {
+      const next = [entry, ...prev].slice(0, 200)
+      try { localStorage.setItem(HISTORY_KEY, JSON.stringify(next)) } catch {}
+      return next
+    })
+  }
+
+  function toggleSaveHistory(id: string, name?: string) {
+    setQueryHistory(prev => {
+      const next = prev.map(e =>
+        e.id === id ? { ...e, isSaved: !e.isSaved, savedName: name ?? e.savedName } : e
+      )
+      try { localStorage.setItem(HISTORY_KEY, JSON.stringify(next)) } catch {}
+      return next
+    })
+  }
+
+  function deleteHistoryEntry(id: string) {
+    setQueryHistory(prev => {
+      const next = prev.filter(e => e.id !== id)
+      try { localStorage.setItem(HISTORY_KEY, JSON.stringify(next)) } catch {}
+      return next
+    })
+  }
+
+  function handleHistoryRerun(entry: HistoryEntry) {
+    // Navigate to Explore and set up the pending rerun
+    pendingHistoryRerunRef.current = entry
+    setActiveConnId(entry.connectionId)
+    setActiveTable(entry.table)
+    setScreen('explore')
+  }
 
   function handleAddMonitorRow(row: MonitoredRow) {
     setMonitoredRows(prev => {
@@ -403,6 +450,9 @@ export default function App() {
               activeConnection={activeConn}
               activeTable={activeTable}
               initialIndex={pendingExploreIndexRef.current ?? undefined}
+              pendingRerun={pendingHistoryRerunRef.current}
+              onClearPendingRerun={() => { pendingHistoryRerunRef.current = null }}
+              onAddHistory={addHistoryEntry}
               onUpdateSchema={(connId, tableName, attrs) =>
                 setConnections(prev => prev.map(c =>
                   c.id === connId ? {
@@ -429,7 +479,14 @@ export default function App() {
               onRemoveRow={id => setMonitoredRows(prev => prev.filter(r => r.id !== id))}
             />
           )}
-          {screen === 'history' && <QueryHistory />}
+          {screen === 'history' && (
+            <QueryHistory
+              entries={queryHistory}
+              onRunQuery={handleHistoryRerun}
+              onToggleSave={toggleSaveHistory}
+              onDelete={deleteHistoryEntry}
+            />
+          )}
           {screen === 'news'    && <News onVisit={() => setNewsUnread(0)} />}
           {screen === 'settings' && <Settings />}
           {screen === 'docs'    && <Docs />}

@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react'
-import type { DbConnection, FilterChip, FilterOp, QueryResult, QueryDef, JoinType, JoinResult, JoinResultRow, TraceCondition, TraceMatch, TraceResult, TraceOp } from '@/types'
+import type { DbConnection, FilterChip, FilterOp, QueryResult, QueryDef, JoinType, JoinResult, JoinResultRow, TraceCondition, TraceMatch, TraceResult, TraceOp, HistoryEntry } from '@/types'
 import type { MonitoredRow } from '@/screens/LiveMonitor'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { RcuBadge } from '@/components/ui/Badge'
@@ -20,6 +20,9 @@ interface ExploreProps {
   activeConnection: DbConnection | null
   activeTable: string | null
   initialIndex?: string
+  pendingRerun?: HistoryEntry | null
+  onClearPendingRerun?: () => void
+  onAddHistory?: (entry: HistoryEntry) => void
   onUpdateSchema?: (connId: string, tableName: string, attrs: string[]) => void
   onAddMonitorRow?: (row: MonitoredRow) => void
 }
@@ -437,7 +440,7 @@ function TimePresetBar({ timestampField, allFields, onApply }: {
 
 // ── Single-table query tab ────────────────────────────────────────────────────
 
-function QueryTab({ activeConnection, activeTable, initialIndex, onUpdateSchema, onAddMonitorRow }: ExploreProps) {
+function QueryTab({ activeConnection, activeTable, initialIndex, onUpdateSchema, onAddMonitorRow, onAddHistory }: ExploreProps) {
   const [chips, setChips]       = useState<FilterChip[]>([])
   const [limit, setLimit]       = useState(50)
   const [ascending, setAscending] = useState(true)
@@ -594,6 +597,22 @@ function QueryTab({ activeConnection, activeTable, initialIndex, onUpdateSchema,
         setResult(raw)
         setAllFiltered([])
         setSuggestion(computeSuggestion(chips, opMode, pkField, raw, table?.itemCount ?? 0))
+        // Save to history
+        onAddHistory?.({
+          id: `hist-${Date.now()}`,
+          time: new Date(),
+          connectionId: activeConnection.id,
+          connectionName: activeConnection.name,
+          table: activeTable!,
+          filters: chips,
+          result: {
+            count: raw.count,
+            scannedCount: raw.scannedCount,
+            rcuConsumed: raw.rcuConsumed,
+            executionMs: raw.executionMs ?? 0,
+          },
+          isSaved: false,
+        })
         // Enrich field autocomplete from result attribute names
         if (raw.rows.length > 0 && onUpdateSchema) {
           const seen = new Set(Object.keys(raw.rows[0] as Record<string, unknown>))
@@ -635,6 +654,22 @@ function QueryTab({ activeConnection, activeTable, initialIndex, onUpdateSchema,
     }
     setResult(mockResult)
     setSuggestion(computeSuggestion(chips, opMode, pkField, mockResult, table?.itemCount ?? tableRows.length))
+    // Save to history (mock mode)
+    onAddHistory?.({
+      id: `hist-${Date.now()}`,
+      time: new Date(),
+      connectionId: activeConnection!.id,
+      connectionName: activeConnection!.name,
+      table: activeTable!,
+      filters: chips,
+      result: {
+        count: mockResult.count,
+        scannedCount: mockResult.scannedCount,
+        rcuConsumed: mockResult.rcuConsumed,
+        executionMs: mockResult.executionMs ?? 0,
+      },
+      isSaved: false,
+    })
     setLoading(false)
   }
 
@@ -2013,7 +2048,7 @@ const DIAG_ICONS: Record<Diagnostic['level'], string> = {
 
 function PartiQLTab({
   activeConnection,
-  onAddMonitorRow,
+  onAddMonitorRow: _onAddMonitorRow,
 }: {
   activeConnection: DbConnection | null
   onAddMonitorRow?: (row: MonitoredRow) => void
@@ -2362,8 +2397,16 @@ function PartiQLTab({
   )
 }
 
-export function Explore({ activeConnection, activeTable, initialIndex, onUpdateSchema, onAddMonitorRow }: ExploreProps) {
+export function Explore({ activeConnection, activeTable, initialIndex, pendingRerun, onClearPendingRerun, onAddHistory, onUpdateSchema, onAddMonitorRow }: ExploreProps) {
   const [tab, setTab] = useState<'query' | 'join' | 'trace' | 'partiql'>('query')
+
+  // Handle history re-run: switch to query tab
+  useEffect(() => {
+    if (pendingRerun) {
+      setTab('query')
+      onClearPendingRerun?.()
+    }
+  }, [pendingRerun]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!activeConnection && tab === 'query' && !activeTable) {
     return (
@@ -2396,7 +2439,7 @@ export function Explore({ activeConnection, activeTable, initialIndex, onUpdateS
       </div>
 
       <div className="flex-1 overflow-hidden">
-        {tab === 'query' && <QueryTab activeConnection={activeConnection} activeTable={activeTable} initialIndex={initialIndex} onUpdateSchema={onUpdateSchema} onAddMonitorRow={onAddMonitorRow} />}
+        {tab === 'query' && <QueryTab activeConnection={activeConnection} activeTable={activeTable} initialIndex={initialIndex} onUpdateSchema={onUpdateSchema} onAddMonitorRow={onAddMonitorRow} onAddHistory={onAddHistory} />}
         {tab === 'join' && activeConnection && <CrossJoinTab connection={activeConnection} />}
         {tab === 'join' && !activeConnection && (
           <div className="h-full flex items-center justify-center">
