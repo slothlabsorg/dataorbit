@@ -135,6 +135,14 @@ function JsonEditor({
 
 // ── Schema panel ──────────────────────────────────────────────────────────────
 
+function formatBytes(bytes: number | undefined | null): string {
+  if (bytes == null || bytes === 0) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let v = bytes, u = 0
+  while (v >= 1024 && u < units.length - 1) { v /= 1024; u++ }
+  return `${v < 10 ? v.toFixed(1) : Math.round(v)} ${units[u]}`
+}
+
 function SchemaPanel({ table, onClose, onIndexClick }: { table: TableMeta; onClose: () => void; onIndexClick?: (indexName: string) => void }) {
   return (
     <motion.div
@@ -142,37 +150,83 @@ function SchemaPanel({ table, onClose, onIndexClick }: { table: TableMeta; onClo
       animate={{ height: 'auto', opacity: 1 }}
       exit={{ height: 0, opacity: 0 }}
       transition={{ duration: 0.15 }}
-      className="overflow-hidden border-b border-border-subtle bg-bg-elevated/60"
+      className="overflow-hidden border-b border-border-subtle bg-bg-elevated/80 relative"
     >
-      <div className="px-4 py-2.5 flex gap-6 items-start text-[11px]">
-        <div className="space-y-0.5">
-          <p className="text-text-muted">pk <code className="text-text-secondary font-mono">{table.partitionKey ?? '—'}</code></p>
-          {table.sortKey && <p className="text-text-muted">sk <code className="text-text-secondary font-mono">{table.sortKey}</code></p>}
+      <div className="px-4 py-3 space-y-2.5">
+        {/* Row 1: keys + stats */}
+        <div className="flex flex-wrap gap-x-6 gap-y-1.5 text-[11px]">
+          {/* Keys */}
+          <div className="flex items-center gap-3">
+            <span className="flex items-center gap-1">
+              <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-primary/15 text-primary uppercase tracking-wider">PK</span>
+              <code className="text-text-secondary font-mono">{table.partitionKey ?? '—'}</code>
+              <span className="text-text-muted text-[10px]">(S)</span>
+            </span>
+            {table.sortKey ? (
+              <span className="flex items-center gap-1">
+                <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-violet-500/15 text-violet-400 uppercase tracking-wider">SK</span>
+                <code className="text-text-secondary font-mono">{table.sortKey}</code>
+                <span className="text-text-muted text-[10px]">(S)</span>
+              </span>
+            ) : (
+              <span className="text-text-muted text-[10px]">no sort key</span>
+            )}
+          </div>
+
+          {/* Divider */}
+          <span className="text-border w-px self-stretch" />
+
+          {/* Stats */}
+          <div className="flex items-center gap-4 text-text-muted">
+            {table.itemCount != null && (
+              <span title="Estimated item count (updated every ~6 hours by DynamoDB)">
+                <strong className="text-text-secondary">{table.itemCount.toLocaleString()}</strong> items
+              </span>
+            )}
+            {table.sizeBytes != null && (
+              <span title="Estimated table size">
+                <strong className="text-text-secondary">{formatBytes(table.sizeBytes)}</strong>
+              </span>
+            )}
+            <span title="Billing mode">
+              {table.billingMode === 'PAY_PER_REQUEST' || !table.billingMode
+                ? <span className="text-success">On-demand</span>
+                : <span className="text-warning">Provisioned</span>}
+            </span>
+            <span title="DynamoDB Streams">
+              {table.streamEnabled
+                ? <span className="flex items-center gap-1 text-success"><span className="w-1.5 h-1.5 rounded-full bg-success inline-block" />Streams on</span>
+                : <span className="text-text-muted">Streams off</span>}
+            </span>
+            <span className="text-text-muted">Standard</span>
+          </div>
         </div>
-        <div className="space-y-0.5">
-          {table.itemCount != null && <p className="text-text-muted">{table.itemCount.toLocaleString()} items</p>}
-          {table.billingMode && <p className="text-text-muted">{table.billingMode === 'PAY_PER_REQUEST' ? 'on-demand' : 'provisioned'}</p>}
-        </div>
+
+        {/* Row 2: indexes */}
         {(table.indexes?.length ?? 0) > 0 && (
-          <div className="flex-1">
-            <p className="text-text-muted mb-1">Indexes</p>
-            <div className="flex flex-wrap gap-1.5">
-              {table.indexes!.map(idx => (
-                <button
-                  key={idx.name}
-                  onClick={() => onIndexClick?.(idx.name)}
-                  className="px-1.5 py-0.5 rounded bg-bg-surface border border-border-subtle text-text-secondary hover:border-primary/40 hover:bg-primary/5 transition-colors cursor-pointer"
-                  title="Explore with this index"
-                >
-                  <span className="text-primary">{idx.type}</span> {idx.name}
-                  <span className="text-text-muted"> · pk:{idx.partitionKey}{idx.sortKey ? ` sk:${idx.sortKey}` : ''}</span>
-                </button>
-              ))}
-            </div>
+          <div className="flex flex-wrap gap-1.5">
+            <span className="text-[10px] text-text-muted self-center mr-1">
+              {table.indexes!.length} {table.indexes!.length === 1 ? 'index' : 'indexes'}:
+            </span>
+            {table.indexes!.map(idx => (
+              <button
+                key={idx.name}
+                onClick={() => onIndexClick?.(idx.name)}
+                className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-bg-surface border border-border-subtle hover:border-primary/40 hover:bg-primary/5 transition-colors text-[10px] cursor-pointer"
+                title={`Explore with ${idx.name} · Click to query this index`}
+              >
+                <span className={`font-bold text-[9px] ${idx.type === 'GSI' ? 'text-warning' : 'text-violet-400'}`}>{idx.type}</span>
+                <span className="text-text-secondary font-mono truncate max-w-[160px]">{idx.name}</span>
+                <span className="text-text-muted">pk:{idx.partitionKey}{idx.sortKey ? ` sk:${idx.sortKey}` : ''}</span>
+                <svg className="w-2.5 h-2.5 text-text-muted flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
+                </svg>
+              </button>
+            ))}
           </div>
         )}
-        <button onClick={onClose} className="ml-auto text-text-muted hover:text-text-primary text-xs flex-shrink-0">✕</button>
       </div>
+      <button onClick={onClose} className="absolute top-2.5 right-3 text-text-muted hover:text-text-primary text-xs" title="Close schema panel">✕</button>
     </motion.div>
   )
 }
@@ -298,6 +352,36 @@ export function Browse({ activeConnection, activeTable, onSelectTable, onRefresh
     : true
   const [copiedCell, setCopiedCell] = useState<string | null>(null)
 
+  // ── Resizable columns ──────────────────────────────────────────────────────
+  const COL_MIN = 60
+  const COL_DEFAULT = 180
+  const [colWidths, setColWidths] = useState<Record<string, number>>({})
+  const resizeDragRef = useRef<{ col: string; startX: number; startW: number } | null>(null)
+
+  function startColResize(col: string, e: React.MouseEvent) {
+    e.preventDefault()
+    e.stopPropagation()
+    const startW = colWidths[col] ?? COL_DEFAULT
+    resizeDragRef.current = { col, startX: e.clientX, startW }
+    const move = (ev: MouseEvent) => {
+      if (!resizeDragRef.current) return
+      const delta = ev.clientX - resizeDragRef.current.startX
+      const next  = Math.max(COL_MIN, resizeDragRef.current.startW + delta)
+      setColWidths(prev => ({ ...prev, [resizeDragRef.current!.col]: next }))
+    }
+    const up = () => {
+      resizeDragRef.current = null
+      window.removeEventListener('mousemove', move)
+      window.removeEventListener('mouseup', up)
+    }
+    window.addEventListener('mousemove', move)
+    window.addEventListener('mouseup', up)
+  }
+
+  function resetColWidth(col: string) {
+    setColWidths(prev => { const next = { ...prev }; delete next[col]; return next })
+  }
+
   const table = activeConnection?.tables?.find(t => t.name === activeTable) ?? null
 
   // Load schema on-demand then fetch rows
@@ -305,6 +389,7 @@ export function Browse({ activeConnection, activeTable, onSelectTable, onRefresh
     if (!activeConnection || !activeTable) { setResult(null); return }
     setSelectedRow(null)
     setEditingRow(null)
+    setColWidths({})
     lastKeyRef.current = undefined
 
     const tbl = activeConnection.tables?.find(t => t.name === activeTable)
@@ -604,12 +689,27 @@ export function Browse({ activeConnection, activeTable, onSelectTable, onRefresh
           ) : (
             <div className="flex-1 overflow-hidden flex flex-col">
               <div className="flex-1 overflow-auto">
-                <table className="w-full text-xs font-mono">
+                <table className="w-full text-xs font-mono" style={{ tableLayout: 'fixed' }}>
+                  <colgroup>
+                    {allCols.map(col => (
+                      <col key={col} style={{ width: colWidths[col] ?? COL_DEFAULT }} />
+                    ))}
+                  </colgroup>
                   <thead className="sticky top-0 bg-bg-elevated border-b border-border z-10">
                     <tr>
                       {allCols.map(col => (
-                        <th key={col} className="text-left px-3 py-2 text-text-muted font-semibold whitespace-nowrap border-r border-border-subtle last:border-r-0">
-                          {col}
+                        <th key={col} className="text-left px-3 py-2 text-text-muted font-semibold whitespace-nowrap border-r border-border-subtle last:border-r-0 relative group/th select-none"
+                          style={{ width: colWidths[col] ?? COL_DEFAULT, maxWidth: colWidths[col] ?? COL_DEFAULT }}>
+                          <span className="truncate block pr-2">{col}</span>
+                          {/* Drag handle */}
+                          <div
+                            onMouseDown={e => startColResize(col, e)}
+                            onDoubleClick={() => resetColWidth(col)}
+                            className="absolute right-0 top-0 bottom-0 w-3 cursor-col-resize flex items-center justify-center opacity-0 group-hover/th:opacity-100 transition-opacity"
+                            title="Drag to resize · Double-click to reset"
+                          >
+                            <div className="w-px h-4 bg-primary/50 rounded-full" />
+                          </div>
                         </th>
                       ))}
                     </tr>
@@ -630,11 +730,12 @@ export function Browse({ activeConnection, activeTable, onSelectTable, onRefresh
                           const val = (row as Record<string, unknown>)[col]
                           const str = sanitizeDisplay(val)
                           const cellId = `${i}-${col}`
+                          const w = colWidths[col] ?? COL_DEFAULT
                           return (
                             <td
                               key={col}
-                              className={`px-3 py-1.5 text-text-secondary whitespace-nowrap max-w-[220px] overflow-hidden text-ellipsis border-r border-border-subtle last:border-r-0 ${copiedCell === cellId ? 'bg-success/15' : ''}`}
-                              title={str}
+                              className={`relative px-3 py-1.5 text-text-secondary border-r border-border-subtle last:border-r-0 group/cell overflow-hidden ${copiedCell === cellId ? 'bg-success/15' : ''}`}
+                              style={{ width: w, maxWidth: w }}
                               onDoubleClick={e => {
                                 if (!copyOnDblClick) return
                                 e.stopPropagation()
@@ -643,7 +744,29 @@ export function Browse({ activeConnection, activeTable, onSelectTable, onRefresh
                                 setTimeout(() => setCopiedCell(null), 800)
                               }}
                             >
-                              {copiedCell === cellId ? <span className="text-success text-[10px]">✓ Copied</span> : str}
+                              {copiedCell === cellId ? (
+                                <span className="text-success text-[10px]">✓ Copied</span>
+                              ) : (
+                                <>
+                                  <span className="block truncate" title={str}>{str}</span>
+                                  {/* Copy icon — visible on hover */}
+                                  <button
+                                    onClick={e => {
+                                      e.stopPropagation()
+                                      navigator.clipboard.writeText(str).catch(() => {})
+                                      setCopiedCell(cellId)
+                                      setTimeout(() => setCopiedCell(null), 800)
+                                    }}
+                                    title={`Copy value${copyOnDblClick ? ' (or double-click)' : ''}`}
+                                    className="absolute right-1.5 top-1/2 -translate-y-1/2 opacity-0 group-hover/cell:opacity-100 transition-opacity p-0.5 rounded bg-bg-elevated/90 hover:bg-primary/10 hover:text-primary text-text-muted"
+                                  >
+                                    <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                      <rect x="9" y="9" width="13" height="13" rx="2"/>
+                                      <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
+                                    </svg>
+                                  </button>
+                                </>
+                              )}
                             </td>
                           )
                         })}
